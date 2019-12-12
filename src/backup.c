@@ -917,11 +917,7 @@ backup_thread_func(void *cont)
 
 		as_error ae;
 
-		if (pnc.conf->no_records) {
-			if (verbose) {
-				ver("Skipping record backup");
-			}
-		} else if (aerospike_scan_node(pnc.conf->as, &ae, pnc.conf->policy, pnc.conf->scan,
+		if (aerospike_scan_node(pnc.conf->as, &ae, pnc.conf->policy, pnc.conf->scan,
 				pnc.node_name, scan_callback, &pnc) != AEROSPIKE_OK) {
 			if (ae.code == AEROSPIKE_OK) {
 				inf("Node scan for %s aborted", pnc.node_name);
@@ -1881,8 +1877,6 @@ usage(const char *name)
 	fprintf(stderr,"                       typically a FIFO.\n");
 	fprintf(stderr, "  -N, --nice <bandwidth>\n");
 	fprintf(stderr, "                      The limit for write storage bandwidth in MiB/s.\n");
-	fprintf(stderr, "  -R, --no-records\n");
-	fprintf(stderr, "                      Don't backup any records.\n");
 	fprintf(stderr, "  -a, --modified-after <YYYY-MM-DD_HH:MM:SS>\n");
 	fprintf(stderr, "                      Perform an incremental backup; only include records \n");
 	fprintf(stderr, "                      that changed after the given date and time. The system's \n");
@@ -1969,7 +1963,6 @@ main(int32_t argc, char **argv)
 		{ "parallel", required_argument, NULL, 'w' },
 		{ "no-bins", no_argument, NULL, 'x' },
 		{ "bin-list", required_argument, NULL, 'B' },
-		{ "no-records", no_argument, NULL, 'R' },
 		{ "services-alternate", no_argument, NULL, 'S' },
 		{ "namespace", required_argument, NULL, 'n' },
 		{ "set", required_argument, NULL, 's' },
@@ -2225,10 +2218,6 @@ main(int32_t argc, char **argv)
 			}
 
 			conf.bandwidth = tmp * 1024 * 1024;
-			break;
-
-		case 'R':
-			conf.no_records = true;
 			break;
 
 		case 'S':
@@ -2785,7 +2774,6 @@ config_default(backup_config *conf)
 	conf->parallel = DEFAULT_PARALLEL;
 	conf->machine = NULL;
 	conf->bandwidth = 0;
-	conf->no_records = false;
 	conf->file_limit = DEFAULT_FILE_LIMIT * 1024 * 1024;
 
 	memset(&conf->tls, 0, sizeof(as_config_tls));

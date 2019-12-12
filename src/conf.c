@@ -649,9 +649,6 @@ config_backup(toml_table_t *conftab, backup_config *c, const char *instance,
 				status = false;
 			}
 
-		} else if (! strcasecmp("no-records", name)) {
-			status = config_bool(curtab, name, (void*)&c->no_records);
-
 		} else {
 			fprintf(stderr, "Unknown parameter `%s` in `%s` section\n", name,
 					asbackup);
@@ -743,9 +740,6 @@ config_restore(toml_table_t *conftab, restore_config *c, const char *instance,
 
 		} else if (! strcasecmp("nice-list", name)) {
 			status = config_str(curtab, name, (void*)&c->nice_list);
-
-		} else if (! strcasecmp("no-records", name)) {
-			status = config_bool(curtab, name, (void*)&c->no_records);
 
 		} else if (! strcasecmp("wait", name)) {
 			status = config_bool(curtab, name, (void*)&c->wait);
