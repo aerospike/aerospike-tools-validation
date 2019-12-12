@@ -27,46 +27,12 @@ extern char *aerospike_client_version;  ///< The C client's version string.
 
 static volatile bool stop = false;  ///< Makes background threads exit.
 
-static volatile bool one_shot_done = false;                         ///< Indicates that the one-time
-                                                                    ///  work (secondary indexes and
-                                                                    ///  UDF files) is complete.
-static pthread_cond_t one_shot_cond = PTHREAD_COND_INITIALIZER;     ///< Signals completion of the
-                                                                    ///  one-time work (secondary
-                                                                    ///  indexes and UDF files) to
-                                                                    ///  other threads.
 static pthread_cond_t bandwidth_cond = PTHREAD_COND_INITIALIZER;    ///< Used by the counter thread
                                                                     ///  to signal newly available
                                                                     ///  bandwidth to the backup
                                                                     ///  threads.
 
 static void config_default(backup_config *conf);
-
-///
-/// Waits until the one-time work (secondary indexes and UDF files) is complete.
-///
-static void
-wait_one_shot(void)
-{
-	safe_lock();
-
-	while (!one_shot_done) {
-		safe_wait(&one_shot_cond);
-	}
-
-	safe_unlock();
-}
-
-///
-/// Signals that the one-time work (secondary indexes and UDF files) is complete.
-///
-static void
-signal_one_shot(void)
-{
-	safe_lock();
-	one_shot_done = true;
-	safe_signal(&one_shot_cond);
-	safe_unlock();
-}
 
 ///
 /// Ensures that there is enough disk space available. Outputs a warning, if there isn't.
@@ -867,8 +833,6 @@ backup_thread_func(void *cont)
 		pnc.rec_count_file = pnc.byte_count_file = 0;
 		pnc.file_count = 0;
 		pnc.rec_count_node = pnc.byte_count_node = 0;
-		pnc.samples = args.samples;
-		pnc.n_samples = args.n_samples;
 
 		inf("Starting backup for node %s", pnc.node_name);
 
@@ -884,35 +848,6 @@ backup_thread_func(void *cont)
 		} else if (pnc.conf->directory != NULL && !open_dir_file(&pnc)) {
 			err("Error while opening first backup file");
 			break;
-		}
-
-		// if we got the first job in the queue, take care of secondary indexes and UDF files
-		if (args.first) {
-			if (verbose) {
-				ver("Picked up first job, doing one shot work");
-			}
-
-			if (fprintf_bytes(&args.bytes, pnc.fd, META_PREFIX META_FIRST_FILE "\n") < 0) {
-				err_code("Error while writing meta data to backup file");
-				stop = true;
-				goto close_file;
-			}
-
-			pnc.byte_count_file = pnc.byte_count_node += args.bytes;
-			cf_atomic64_add(&pnc.conf->byte_count_total, (int64_t)args.bytes);
-
-			if (verbose) {
-				ver("Signaling one shot work completion");
-			}
-
-			signal_one_shot();
-		// all other jobs wait until the first job is done with the secondary indexes and UDF files
-		} else {
-			if (verbose) {
-				ver("Ensuring one shot work completion");
-			}
-
-			wait_one_shot();
 		}
 
 		as_error ae;
@@ -957,10 +892,6 @@ backup_thread_func(void *cont)
 
 		stop = true;
 	}
-
-	// in case we got the first job and failed before we were done with the secondary indexes
-	// and UDF files
-	signal_one_shot();
 
 	if (verbose) {
 		ver("Leaving backup thread");
@@ -1870,8 +1801,6 @@ usage(const char *name)
 	fprintf(stderr, "                      <IP addr 1>:<TLS_NAME 1>:<port 1>[,<IP addr 2>:<TLS_NAME 2>:<port 2>[,...]]\n");
 	fprintf(stderr, "                      Backup the given cluster nodes only. Default: backup the \n");
 	fprintf(stderr, "                      whole cluster.\n");
-	fprintf(stderr, "  -%%, --percent <percentage>\n");
-	fprintf(stderr, "                      The percentage of records to process. Default: 100.\n");
 	fprintf(stderr, "  -m, --machine <path>\n");
 	fprintf(stderr, "                      Output machine-readable status updates to the given path, \n");
 	fprintf(stderr,"                       typically a FIFO.\n");
@@ -1975,7 +1904,6 @@ main(int32_t argc, char **argv)
 		{ "modified-before", required_argument, NULL, 'b' },
 		{ "priority", required_argument, NULL, 'f' },
 		{ "records-per-second", required_argument, NULL, 'L' },
-		{ "percent", required_argument, NULL, '%' },
 		{ "machine", required_argument, NULL, 'm' },
 		{ "nice", required_argument, NULL, 'N' },
 		{ NULL, 0, NULL, 0 }
@@ -1989,10 +1917,8 @@ main(int32_t argc, char **argv)
 	backup_config conf;
 	memset(&conf, 0, sizeof(backup_config));
 	config_default(&conf);
-	
-	conf.encoder = &(backup_encoder){
-		text_put_record, text_put_udf_file, text_put_secondary_index
-	};
+
+	conf.encoder = &(backup_encoder){text_put_record};
 
 	as_policy_scan policy;
 	as_policy_scan_init(&policy);
@@ -2196,15 +2122,6 @@ main(int32_t argc, char **argv)
 
 		case 'l':
 			conf.node_list = safe_strdup(optarg);
-			break;
-
-		case '%':
-			if (!better_atoi(optarg, &tmp) || tmp < 1 || tmp > 100) {
-				err("Invalid percentage value %s", optarg);
-				goto cleanup1;
-			}
-
-			scan.percent = (uint8_t)tmp;
 			break;
 
 		case 'm':
@@ -2536,10 +2453,6 @@ main(int32_t argc, char **argv)
 
 	conf.rec_count_estimate = rec_count_estimate;
 
-	if (scan.percent < 100) {
-		conf.rec_count_estimate = conf.rec_count_estimate * scan.percent / 100;
-	}
-
 	inf("Namespace contains %" PRIu64 " record(s)", conf.rec_count_estimate);
 
 	bool has_ldt;
@@ -2582,14 +2495,10 @@ main(int32_t argc, char **argv)
 	pthread_t backup_threads[MAX_PARALLEL];
 	uint32_t n_threads = (uint32_t)conf.parallel > n_node_names ? n_node_names :
 			(uint32_t)conf.parallel;
-	static uint64_t samples[NUM_SAMPLES];
-	static uint32_t n_samples = 0;
 	backup_thread_args backup_args;
 	backup_args.conf = &conf;
 	backup_args.shared_fd = NULL;
 	backup_args.bytes = 0;
-	backup_args.samples = samples;
-	backup_args.n_samples = &n_samples;
 	cf_queue *job_queue = cf_queue_create(sizeof (backup_thread_args), true);
 
 	if (job_queue == NULL) {
@@ -2613,9 +2522,6 @@ main(int32_t argc, char **argv)
 
 	for (uint32_t i = 0; i < n_node_names; ++i) {
 		memcpy(backup_args.node_name, (*node_names)[i], AS_NODE_NAME_SIZE);
-		// convention: only the first first job will backup secondary indexes and UDF files
-		// (so that they won't be backed up multiple times)
-		backup_args.first = i == 0;
 
 		if (cf_queue_push(job_queue, &backup_args) != CF_QUEUE_OK) {
 			err("Error while queueing backup job");

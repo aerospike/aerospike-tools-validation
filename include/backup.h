@@ -26,9 +26,6 @@
 
 #include <shared.h>
 
-#define NUM_SAMPLES 10000                           ///< Number of samples to take for the record
-                                                    ///  size estimate.
-
 #define DEFAULT_FILE_LIMIT 250                      ///< By default, start a new backup file when
                                                     ///  the current backup file crosses this size
                                                     ///  in MiB.
@@ -36,8 +33,6 @@
                                                     ///  parallel.
 #define MAX_PARALLEL 100                            ///< Allow up to this many nodes to be backed up
                                                     ///  in parallel.
-#define MAX_UDF_FILES 1000                          ///< The maximal number of UDF files that we can
-                                                    ///  backup.
 
 ///
 /// The interface exposed by the backup file format encoder.
@@ -54,28 +49,6 @@ typedef struct {
 	/// @result         `true`, if successful.
 	///
 	bool (*put_record)(uint64_t *bytes, FILE *fd, bool compact, const as_record *rec);
-
-	///
-	/// Writes a UDF file to the backup file.
-	///
-	/// @param bytes  The number of bytes written to the backup file.
-	/// @param fd     The file descriptor of the backup file.
-	/// @param file   The UDF file to be written.
-	///
-	/// @result       `true`, if successful.
-	///
-	bool (*put_udf_file)(uint64_t *bytes, FILE *fd, const as_udf_file *file);
-
-	///
-	/// Writes the specification of a secondary index to the backup file.
-	///
-	/// @param bytes  The number of bytes written to the backup file.
-	/// @param fd     The file descriptor of the backup file.
-	/// @param index  The index specification to be written.
-	///
-	/// @result       `true`, if successful.
-	///
-	bool (*put_secondary_index)(uint64_t *bytes, FILE *fd, const index_param *index);
 } backup_encoder;
 
 ///
@@ -155,12 +128,6 @@ typedef struct {
 	uint64_t bytes;                     ///< When backing up to a single file, the number of bytes
 	                                    ///  that were written when open_file() created that file
 	                                    ///  (version header, meta data).
-	bool first;                         ///< This is the first job in the job queue. It'll take care
-	                                    ///  of backing up secondary indexes and UDF files.
-	uint64_t *samples;                  ///< When estimating the average records size, the array
-	                                    ///  that receives the record size samples.
-	uint32_t *n_samples;                ///< The number of record size samples that fit into the
-	                                    ///  samples array.
 } backup_thread_args;
 
 ///
@@ -190,10 +157,4 @@ typedef struct {
 	                                    ///  processed cluster node.
 	uint64_t byte_count_node;           ///< Counts the number of bytes written to all backup files
 	                                    ///  for the currently processed cluster node.
-	uint64_t *samples;                  ///< When estimating the average record size, the array that
-	                                    ///  receives the record size samples. Copied from
-	                                    ///  backup_thread_args.samples.
-	uint32_t *n_samples;                ///< The number of record size samples that fit into the
-	                                    ///  samples array. Copied from
-	                                    ///  backup_thread_args.n_samples.
 } per_node_context;
