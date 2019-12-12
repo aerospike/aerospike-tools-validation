@@ -640,9 +640,6 @@ config_backup(toml_table_t *conftab, backup_config *c, const char *instance,
 		} else if (! strcasecmp("machine", name)) {
 			status = config_str(curtab, name, (void*)&c->machine);
 
-		} else if (! strcasecmp("estimate", name)) {
-			status = config_bool(curtab, name, (void*)&c->estimate);
-
 		} else if (! strcasecmp("bandwidth", name)) {
 
 			status = config_int(curtab, name, (void*)&i_val);
@@ -654,12 +651,6 @@ config_backup(toml_table_t *conftab, backup_config *c, const char *instance,
 
 		} else if (! strcasecmp("no-records", name)) {
 			status = config_bool(curtab, name, (void*)&c->no_records);
-
-		} else if (! strcasecmp("no-indexes", name)) {
-			status = config_bool(curtab, name, (void*)&c->no_indexes);
-
-		} else if (! strcasecmp("no-udfs", name)) {
-			status = config_bool(curtab, name, (void*)&c->no_udfs);
 
 		} else {
 			fprintf(stderr, "Unknown parameter `%s` in `%s` section\n", name,
@@ -755,15 +746,6 @@ config_restore(toml_table_t *conftab, restore_config *c, const char *instance,
 
 		} else if (! strcasecmp("no-records", name)) {
 			status = config_bool(curtab, name, (void*)&c->no_records);
-
-		} else if (! strcasecmp("no-indexes", name)) {
-			status = config_bool(curtab, name, (void*)&c->no_indexes);
-
-		} else if (! strcasecmp("indexes-last", name)) {
-			status = config_bool(curtab, name, (void*)&c->indexes_last);
-
-		} else if (! strcasecmp("no-udfs", name)) {
-			status = config_bool(curtab, name, (void*)&c->no_udfs);
 
 		} else if (! strcasecmp("wait", name)) {
 			status = config_bool(curtab, name, (void*)&c->wait);

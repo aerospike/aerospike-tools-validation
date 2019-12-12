@@ -82,7 +82,6 @@ typedef struct {
 /// The global backup configuration and stats shared by all backup threads and the counter thread.
 ///
 typedef struct {
-
 	char *host;
 	bool use_services_alternate;
 	int32_t port;
@@ -93,7 +92,7 @@ typedef struct {
 	char *node_list;
 	int64_t mod_after;
 	int64_t mod_before;
-	
+
 	as_config_tls tls;
 
 	aerospike *as;                      ///< The Aerospike client to be used for the node scans.
@@ -107,12 +106,8 @@ typedef struct {
 	int32_t parallel;                   ///< The maximal number of cluster nodes scanned in
 	                                    ///  parallel.
 	char *machine;                      ///< The path for the machine-readable output.
-	bool estimate;                      ///< Requests an estimate of the average record size instead
-	                                    ///  of a real backup.
 	uint64_t bandwidth;                 ///< The B/s cap for throttling.
 	bool no_records;                    ///< Excludes records from the backup.
-	bool no_indexes;                    ///< Excludes secondary indexes from the backup.
-	bool no_udfs;                       ///< Excludes UDF files from the backup.
 	uint64_t file_limit;                ///< Start a new backup file when the current backup file
 	                                    ///  crosses this size.
 	backup_encoder *encoder;            ///< The file format encoder to be used for writing data to

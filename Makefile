@@ -91,36 +91,15 @@ RESTORE_SRC := $(DIR_SRC)/restore.c $(DIR_SRC)/conf.c $(DIR_SRC)/utils.c $(DIR_S
 RESTORE_OBJ := $(call src_to_obj, $(RESTORE_SRC))
 RESTORE_DEP := $(call obj_to_dep, $(RESTORE_OBJ))
 
-FILL_INC := $(DIR_INC)/spec.h
-FILL_SRC := $(DIR_SRC)/fill.c $(DIR_SRC)/spec.c
-FILL_OBJ := $(call src_to_obj, $(FILL_SRC))
-FILL_DEP := $(call obj_to_dep, $(FILL_OBJ))
-
-BACKUP := $(DIR_BIN)/asbackup
-RESTORE := $(DIR_BIN)/asrestore
-FILL := $(DIR_BIN)/fill
+BACKUP := $(DIR_BIN)/asvalidation
+RESTORE := $(DIR_BIN)/ascorrection
 TOML := $(DIR_TOML)/libtoml.a
 
-INCS := $(BACKUP_INC) $(RESTORE_INC) $(FILL_INC)
-SRCS := $(BACKUP_SRC) $(RESTORE_SRC) $(FILL_SRC)
-OBJS := $(BACKUP_OBJ) $(RESTORE_OBJ) $(FILL_OBJ)
-DEPS := $(BACKUP_DEP) $(RESTORE_DEP) $(FILL_DEP)
-BINS := $(TOML) $(BACKUP) $(RESTORE) $(FILL)
-
-ifeq ($(OS), Linux)
-SPEED_INC :=
-SPEED_SRC := $(DIR_SRC)/speed.c
-SPEED_OBJ := $(call src_to_obj, $(SPEED_SRC))
-SPEED_DEP := $(call obj_to_dep, $(SPEED_OBJ))
-
-SPEED := $(DIR_BIN)/speed
-
-INCS += $(SPEED_INC)
-SRCS += $(SPEED_SRC)
-OBJS += $(SPEED_OBJ)
-DEPS += $(SPEED_DEP)
-BINS += $(SPEED)
-endif
+INCS := $(BACKUP_INC) $(RESTORE_INC)
+SRCS := $(BACKUP_SRC) $(RESTORE_SRC)
+OBJS := $(BACKUP_OBJ) $(RESTORE_OBJ)
+DEPS := $(BACKUP_DEP) $(RESTORE_DEP)
+BINS := $(TOML) $(BACKUP) $(RESTORE)
 
 # sort removes duplicates
 INCS := $(sort $(INCS))
@@ -165,20 +144,9 @@ $(BACKUP): $(BACKUP_OBJ) | $(DIR_BIN)
 $(RESTORE): $(RESTORE_OBJ) | $(DIR_BIN)
 	$(CC) $(LDFLAGS) -o $(RESTORE) $(RESTORE_OBJ) $(LIBRARIES)
 
-$(FILL): $(FILL_OBJ) | $(DIR_BIN)
-	$(CC) $(LDFLAGS) -o $(FILL) $(FILL_OBJ) $(LIBRARIES)
-
 $(TOML):
 	$(MAKE) -C $(DIR_TOML)
 
 -include $(BACKUP_DEP)
 -include $(RESTORE_DEP)
--include $(FILL_DEP)
-
-ifeq ($(OS), Linux)
-$(SPEED): $(SPEED_OBJ) | $(DIR_BIN)
-	$(CC) $(LDFLAGS) -o $(SPEED) $(SPEED_OBJ) $(LIBRARIES)
-
--include $(SPEED_DEP)
-endif
 

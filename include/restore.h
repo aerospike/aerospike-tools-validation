@@ -99,9 +99,6 @@ typedef struct {
 	uint32_t threads;
 	char *nice_list;
 	bool no_records;
-	bool no_indexes;
-	bool indexes_last;
-	bool no_udfs;
 	bool wait;
 	uint32_t timeout;               ///< timeout for Aerospike commands.
 

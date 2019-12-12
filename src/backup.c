@@ -767,25 +767,14 @@ scan_callback(const as_val *val, void *cont)
 	}
 
 	// backing up to a single backup file: allow one thread at a time to write
-	if (pnc->conf->output_file != NULL || pnc->conf->estimate) {
+	if (pnc->conf->output_file != NULL) {
 		safe_lock();
-	}
-
-	if (pnc->conf->estimate && *pnc->n_samples >= NUM_SAMPLES) {
-		inf("Backed up enough samples for estimate");
-		safe_unlock();
-		return false;
 	}
 
 	uint64_t bytes = 0;
 	bool ok = pnc->conf->encoder->put_record(&bytes, pnc->fd, pnc->conf->compact, rec);
 
-	if (pnc->conf->estimate) {
-		pnc->samples[*pnc->n_samples] = bytes;
-		++(*pnc->n_samples);
-	}
-
-	if (pnc->conf->output_file != NULL || pnc->conf->estimate) {
+	if (pnc->conf->output_file != NULL) {
 		safe_unlock();
 	}
 
@@ -814,229 +803,6 @@ scan_callback(const as_val *val, void *cont)
 	}
 
 	return true;
-}
-
-///
-/// Stores secondary index information.
-///
-///   - Retrieves the information from the cluster.
-///   - Parses the information.
-///   - Invokes backup_encoder.put_secondary_index() to store it.
-///
-/// @param pnc  The per-node context of the backup thread that's backing up the indexes.
-///
-/// @result     `true`, if successful.
-///
-static bool
-process_secondary_indexes(per_node_context *pnc)
-{
-	if (verbose) {
-		ver("Processing secondary indexes");
-	}
-
-	bool res = false;
-
-	size_t value_size = sizeof "sindex-list:ns=" - 1 + strlen(pnc->conf->scan->ns) + 1;
-	char value[value_size];
-	snprintf(value, value_size, "sindex-list:ns=%s", pnc->conf->scan->ns);
-
-	as_policy_info policy;
-	as_policy_info_init(&policy);
-	policy.timeout = TIMEOUT;
-
-	char *resp =  NULL;
-	as_error ae;
-
-	if (aerospike_info_any(pnc->conf->as, &ae, &policy, value, &resp) != AEROSPIKE_OK) {
-		err("Error while retrieving secondary index info - code %d: %s at %s:%d", ae.code,
-				ae.message, ae.file, ae.line);
-		goto cleanup0;
-	}
-
-	char *info_str;
-
-	if (as_info_parse_single_response(resp, &info_str) != AEROSPIKE_OK) {
-		err("Error while parsing single info_str response");
-		goto cleanup1;
-	}
-
-	size_t info_len = strlen(info_str);
-
-	if (info_str[info_len - 1] == ';') {
-		info_str[info_len - 1] = 0;
-	}
-
-	if (info_str[0] == 0) {
-		inf("No secondary indexes");
-		res = true;
-		goto cleanup1;
-	}
-
-	as_vector info_vec;
-	as_vector_inita(&info_vec, sizeof (void *), 25);
-	split_string(info_str, ';', false, &info_vec);
-
-	inf("Backing up %u secondary index(es)", info_vec.size);
-	int32_t skipped = 0;
-	char *clone = safe_strdup(info_str);
-	index_param index;
-
-	for (uint32_t i = 0; i < info_vec.size; ++i) {
-		char *index_str = as_vector_get_ptr(&info_vec, i);
-
-		if (!parse_index_info(pnc->conf->scan->ns, index_str, &index)) {
-			err("Error while parsing secondary index info string %s", clone);
-			goto cleanup2;
-		}
-
-		if (verbose) {
-			ver("Storing index %s", index.name);
-		}
-
-		if (pnc->conf->scan->set[0] != 0 && (index.set == NULL ||
-				strcmp(pnc->conf->scan->set, index.set) != 0)) {
-			if (verbose) {
-				ver("Skipping index %s with unwanted set", index.name);
-			}
-
-			++skipped;
-		} else {
-			// backing up to a single backup file: allow one thread at a time to write
-			if (pnc->conf->output_file != NULL) {
-				safe_lock();
-			}
-
-			uint64_t bytes = 0;
-			bool ok = pnc->conf->encoder->put_secondary_index(&bytes, pnc->fd, &index);
-
-			if (pnc->conf->output_file != NULL) {
-				safe_unlock();
-			}
-
-			if (!ok) {
-				err("Error while storing secondary index in backup file");
-				goto cleanup3;
-			}
-
-			pnc->byte_count_file += bytes;
-			pnc->byte_count_node += bytes;
-			cf_atomic64_add(&pnc->conf->byte_count_total, (int64_t)bytes);
-		}
-
-		as_vector_destroy(&index.path_vec);
-	}
-
-	pnc->conf->index_count = info_vec.size;
-	res = true;
-
-	if (skipped > 0) {
-		inf("Skipped %d index(es) with unwanted set(s)", skipped);
-	}
-
-	goto cleanup2;
-
-cleanup3:
-	as_vector_destroy(&index.path_vec);
-
-cleanup2:
-	as_vector_destroy(&info_vec);
-	cf_free(clone);
-
-cleanup1:
-	cf_free(resp);
-
-cleanup0:
-	return res;
-}
-
-///
-/// Stores UDF files.
-///
-///   - Retrieves the UDF files from the cluster.
-///   - Invokes backup_encoder.put_udf_file() to store each of them.
-///
-/// @param pnc  The per-node context of the backup thread that's backing up the UDF files.
-///
-/// @result     `true`, if successful.
-///
-static bool
-process_udfs(per_node_context *pnc)
-{
-	if (verbose) {
-		ver("Processing UDFs");
-	}
-
-	bool res = false;
-
-	as_udf_files files;
-	as_udf_files_init(&files, MAX_UDF_FILES);
-
-	as_policy_info policy;
-	as_policy_info_init(&policy);
-	policy.timeout = TIMEOUT;
-	as_error ae;
-
-	if (aerospike_udf_list(pnc->conf->as, &ae, &policy, &files) != AEROSPIKE_OK) {
-		err("Error while listing UDFs - code %d: %s at %s:%d", ae.code, ae.message, ae.file,
-				ae.line);
-		goto cleanup1;
-	}
-
-	if (files.size == MAX_UDF_FILES) {
-		err("Too many UDF files (%u or more)", MAX_UDF_FILES);
-		goto cleanup2;
-	}
-
-	inf("Backing up %u UDF file(s)", files.size);
-	as_udf_file file;
-	as_udf_file_init(&file);
-
-	for (uint32_t i = 0; i < files.size; ++i) {
-		if (verbose) {
-			ver("Fetching UDF file %u: %s", i + 1, files.entries[i].name);
-		}
-
-		if (aerospike_udf_get(pnc->conf->as, &ae, &policy, files.entries[i].name,
-				files.entries[i].type, &file) != AEROSPIKE_OK) {
-			err("Error while fetching UDF file %s - code %d: %s at %s:%d", files.entries[i].name,
-					ae.code, ae.message, ae.file, ae.line);
-			goto cleanup2;
-		}
-
-		// backing up to a single backup file: allow one thread at a time to write
-		if (pnc->conf->output_file != NULL) {
-			safe_lock();
-		}
-
-		uint64_t bytes = 0;
-		bool ok = pnc->conf->encoder->put_udf_file(&bytes, pnc->fd, &file);
-
-		if (pnc->conf->output_file != NULL) {
-			safe_unlock();
-		}
-
-		if (!ok) {
-			err("Error while storing UDF file in backup file");
-			goto cleanup2;
-		}
-
-		pnc->byte_count_file += bytes;
-		pnc->byte_count_node += bytes;
-		cf_atomic64_add(&pnc->conf->byte_count_total, (int64_t)bytes);
-
-		as_udf_file_destroy(&file);
-		as_udf_file_init(&file);
-	}
-
-	pnc->conf->udf_count = files.size;
-	res = true;
-
-cleanup2:
-	as_udf_file_destroy(&file);
-
-cleanup1:
-	as_udf_files_destroy(&files);
-	return res;
 }
 
 ///
@@ -1134,26 +900,6 @@ backup_thread_func(void *cont)
 
 			pnc.byte_count_file = pnc.byte_count_node += args.bytes;
 			cf_atomic64_add(&pnc.conf->byte_count_total, (int64_t)args.bytes);
-
-			if (pnc.conf->no_indexes) {
-				if (verbose) {
-					ver("Skipping index backup");
-				}
-			} else if (!process_secondary_indexes(&pnc)) {
-				err("Error while processing secondary indexes");
-				stop = true;
-				goto close_file;
-			}
-
-			if (pnc.conf->no_udfs) {
-				if (verbose) {
-					ver("Skipping UDF backup");
-				}
-			} else if (!process_udfs(&pnc)) {
-				err("Error while processing UDFs");
-				stop = true;
-				goto close_file;
-			}
 
 			if (verbose) {
 				ver("Signaling one shot work completion");
@@ -1912,49 +1658,6 @@ get_object_count(aerospike *as, const char *namespace, const char *set,
 }
 
 ///
-/// Estimates and outputs the average record size based on the given record size samples.
-///
-/// The estimate is the upper bound for a 99.9999% confidence interval. The 99.9999% is where the
-/// 4.7 constant comes from.
-///
-/// @param mach_fd             The file descriptor for the machine-readable output.
-/// @param samples             The array of record size samples.
-/// @param n_samples           The number of elements in the sample array.
-/// @param rec_count_estimate  The total number of records.
-///
-static void
-show_estimate(FILE *mach_fd, uint64_t *samples, uint32_t n_samples, uint64_t rec_count_estimate)
-{
-	uint64_t upper = 0;
-	if (n_samples > 0) {
-
-		double exp_value = 0.0;
-
-		for (uint32_t i = 0; i < n_samples; ++i) {
-			exp_value += (double)samples[i];
-		}
-
-		exp_value /= n_samples;
-		double stand_dev = 0.0;
-
-		for (uint32_t i = 0; i < n_samples; ++i) {
-			double diff = (double)samples[i] - exp_value;
-			stand_dev += diff * diff;
-		}
-
-		stand_dev = sqrt(stand_dev / n_samples);
-		upper = (uint64_t)ceil(exp_value + 4.7 * stand_dev / sqrt(n_samples));
-	}
-
-	inf("Estimated overall record size is %" PRIu64 " byte(s)", upper);
-
-	if (mach_fd != NULL && (fprintf(mach_fd, "ESTIMATE:%" PRIu64 ":%" PRIu64 "\n",
-			rec_count_estimate, upper) < 0 || fflush(mach_fd) == EOF)) {
-		err_code("Error while writing machine-readable estimate");
-	}
-}
-
-///
 /// Signal handler for `SIGINT` and `SIGTERM`.
 ///
 /// @param sig  The signal number.
@@ -2176,17 +1879,10 @@ usage(const char *name)
 	fprintf(stderr, "  -m, --machine <path>\n");
 	fprintf(stderr, "                      Output machine-readable status updates to the given path, \n");
 	fprintf(stderr,"                       typically a FIFO.\n");
-	fprintf(stderr, "  -e, --estimate\n");
-	fprintf(stderr, "                      Estimate the backed-up record size from a random sample of \n");
-	fprintf(stderr, "                      10,000 records at 99.9999%% confidence.\n");
 	fprintf(stderr, "  -N, --nice <bandwidth>\n");
 	fprintf(stderr, "                      The limit for write storage bandwidth in MiB/s.\n");
 	fprintf(stderr, "  -R, --no-records\n");
 	fprintf(stderr, "                      Don't backup any records.\n");
-	fprintf(stderr, "  -I, --no-indexes\n");
-	fprintf(stderr, "                      Don't backup any indexes.\n");
-	fprintf(stderr, "  -u, --no-udfs\n");
-	fprintf(stderr, "                      Don't backup any UDFs.\n");
 	fprintf(stderr, "  -a, --modified-after <YYYY-MM-DD_HH:MM:SS>\n");
 	fprintf(stderr, "                      Perform an incremental backup; only include records \n");
 	fprintf(stderr, "                      that changed after the given date and time. The system's \n");
@@ -2274,8 +1970,6 @@ main(int32_t argc, char **argv)
 		{ "no-bins", no_argument, NULL, 'x' },
 		{ "bin-list", required_argument, NULL, 'B' },
 		{ "no-records", no_argument, NULL, 'R' },
-		{ "no-indexes", no_argument, NULL, 'I' },
-		{ "no-udfs", no_argument, NULL, 'u' },
 		{ "services-alternate", no_argument, NULL, 'S' },
 		{ "namespace", required_argument, NULL, 'n' },
 		{ "set", required_argument, NULL, 's' },
@@ -2290,7 +1984,6 @@ main(int32_t argc, char **argv)
 		{ "records-per-second", required_argument, NULL, 'L' },
 		{ "percent", required_argument, NULL, '%' },
 		{ "machine", required_argument, NULL, 'm' },
-		{ "estimate", no_argument, NULL, 'e' },
 		{ "nice", required_argument, NULL, 'N' },
 		{ NULL, 0, NULL, 0 }
 	};
@@ -2525,10 +2218,6 @@ main(int32_t argc, char **argv)
 			conf.machine = optarg;
 			break;
 
-		case 'e':
-			conf.estimate = true;
-			break;
-
 		case 'N':
 			if (!better_atoi(optarg, &tmp) || tmp < 1) {
 				err("Invalid bandwidth value %s", optarg);
@@ -2540,14 +2229,6 @@ main(int32_t argc, char **argv)
 
 		case 'R':
 			conf.no_records = true;
-			break;
-
-		case 'I':
-			conf.no_indexes = true;
-			break;
-
-		case 'u':
-			conf.no_udfs = true;
 			break;
 
 		case 'S':
@@ -2598,10 +2279,10 @@ main(int32_t argc, char **argv)
 			if (optarg) {
 				conf.tls.keyfile_pw = safe_strdup(optarg);
 			} else {
-                                if (optind < argc && NULL != argv[optind] && '-' != argv[optind][0] ) {
-                                        // space separated argument value
-                                        conf.tls.keyfile_pw = safe_strdup(argv[optind++]);
-                                } else {
+				if (optind < argc && NULL != argv[optind] && '-' != argv[optind][0] ) {
+					// space separated argument value
+					conf.tls.keyfile_pw = safe_strdup(argv[optind++]);
+				} else {
 					// No password specified should
 					// force it to default password
 					// to trigger prompt.
@@ -2641,8 +2322,6 @@ main(int32_t argc, char **argv)
 			// no break
 		case CDT_FIX_OPT:
 			conf.cdt_fix = true;
-			conf.no_indexes = true;
-			conf.no_udfs = true;
 			break;
 
 		default:
@@ -2677,7 +2356,6 @@ main(int32_t argc, char **argv)
 	int32_t out_count = 0;
 	out_count += conf.directory != NULL ? 1 : 0;
 	out_count += conf.output_file != NULL ? 1 : 0;
-	out_count += conf.estimate ? 1 : 0;
 
 	if (out_count > 1) {
 		err("Invalid options: --directory, --output-file, and --estimate are mutually exclusive.");
@@ -2686,11 +2364,6 @@ main(int32_t argc, char **argv)
 
 	if (out_count == 0) {
 		err("Please specify a directory (-d), an output file (-o), or make an estimate (-e).");
-		goto cleanup1;
-	}
-
-	if (conf.estimate && conf.no_records) {
-		err("Invalid options: -e and -R are mutually exclusive.");
 		goto cleanup1;
 	}
 
@@ -2709,7 +2382,7 @@ main(int32_t argc, char **argv)
 
 		conf.host = node_specs[0].addr_string;
 		conf.port = ntohs(node_specs[0].port);
-		
+
 		if (node_specs[0].family == AF_INET6) {
 			char *dup;
 			sprintf(conf.host, "%s%s%s", "[", (dup = strdup(conf.host)), "]");
@@ -2893,10 +2566,6 @@ main(int32_t argc, char **argv)
 		goto cleanup5;
 	}
 
-	if (conf.estimate && conf.rec_count_estimate > NUM_SAMPLES) {
-		conf.rec_count_estimate = NUM_SAMPLES;
-	}
-
 	if (conf.directory != NULL && !clean_directory(conf.directory, conf.remove_files)) {
 		goto cleanup5;
 	}
@@ -3025,10 +2694,6 @@ cleanup6:
 		res = EXIT_FAILURE;
 	}
 
-	if (conf.estimate) {
-		show_estimate(mach_fd, samples, n_samples, rec_count_estimate);
-	}
-
 cleanup5:
 	if (node_names != NULL) {
 		cf_free(node_names);
@@ -3119,11 +2784,8 @@ config_default(backup_config *conf)
 	conf->compact = false;
 	conf->parallel = DEFAULT_PARALLEL;
 	conf->machine = NULL;
-	conf->estimate = false;
 	conf->bandwidth = 0;
 	conf->no_records = false;
-	conf->no_indexes = false;
-	conf->no_udfs = false;
 	conf->file_limit = DEFAULT_FILE_LIMIT * 1024 * 1024;
 
 	memset(&conf->tls, 0, sizeof(as_config_tls));
