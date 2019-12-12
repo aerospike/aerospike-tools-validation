@@ -15,10 +15,13 @@
  * the License.
  */
 
+#include <stdbool.h>
+
 #include <backup.h>
+#include <conf.h>
 #include <enc_text.h>
 #include <utils.h>
-#include <conf.h>
+
 #include "msgpack_in.h"
 
 #include <aerospike/as_msgpack.h>
@@ -394,7 +397,7 @@ err("map contents");
 
 		if (cmp != MSGPACK_CMP_LESS) {
 			if (mp.has_nonstorage || (ele_count - i - 1 != 0 &&
-					(msgpack_sz_rep(&mp, ele_count - i - 2) == 0 ||
+					(msgpack_sz_rep(&mp, 2 * (ele_count - i - 2)) == 0 ||
 							mp.has_nonstorage))) {
 err("map ordered contents");
 				cdt_check_set_error(&mp, cf, bc);
