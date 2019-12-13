@@ -84,8 +84,7 @@
 #include <sys/statvfs.h>
 #include <sys/types.h>
 
-#define VERSION_3_0 "3.0"               ///< Indicates a legacy backup file.
-#define VERSION_3_1 "3.1"               ///< Indicates a new-style backup file.
+#define VERSION_1_1 "1.1"               ///< Indicates a new-style backup file.
 
 #define MAX_META_LINE 1000              ///< The maximal length of a meta data line in a backup
                                         ///  file.

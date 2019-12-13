@@ -98,13 +98,12 @@ text_check_floating_point(const char *buffer, size_t len)
 /// @param neg      Indicates that, in addition to digits, a minus sign is also valid data.
 /// @param fp       Indicates that only floating point notation is valid data.
 /// @param delim    The delimiter characters as a NUL-terminated string.
-/// @param unesc    Indicates that the read data is to be unescaped.
 ///
 /// @result         `true`, if successful.
 ///
 static inline bool
 text_nul_read_until(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes, char *buffer,
-		size_t size, bool digits, bool neg, bool fp, char *delim, bool unesc)
+		size_t size, bool digits, bool neg, bool fp, char *delim)
 {
 	size_t len = 0;
 	bool esc = false;
@@ -116,7 +115,7 @@ text_nul_read_until(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *byte
 			return false;
 		}
 
-		if (unesc && ch == '\\' && !esc) {
+		if (ch == '\\' && !esc) {
 			esc = true;
 			continue;
 		}
@@ -161,7 +160,6 @@ text_nul_read_until(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *byte
 /// NUL-terminated.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -172,11 +170,10 @@ text_nul_read_until(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *byte
 /// @result         `true`, if successful.
 ///
 static inline bool
-text_nul_read_token(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
+text_nul_read_token(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 		char *buffer, size_t size, char *delim)
 {
-	return text_nul_read_until(fd, line_no, col_no, bytes, buffer, size, false, false, false, delim,
-			!legacy);
+	return text_nul_read_until(fd, line_no, col_no, bytes, buffer, size, false, false, false, delim);
 }
 
 ///
@@ -186,7 +183,6 @@ text_nul_read_token(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, 
 /// delimiter characters.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -196,13 +192,13 @@ text_nul_read_token(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, 
 /// @result         `true`, if successful.
 ///
 static inline bool
-text_read_size(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
+text_read_size(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 		size_t *value, char *delim)
 {
 	char buffer[MAX_TOKEN_SIZE];
 
 	if (!text_nul_read_until(fd, line_no, col_no, bytes, buffer, sizeof buffer, true, false, false,
-			delim, !legacy)) {
+			delim)) {
 		return false;
 	}
 
@@ -228,7 +224,6 @@ text_read_size(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 /// The integer is delimited by the given delimiter characters.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -238,13 +233,13 @@ text_read_size(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 /// @result         `true`, if successful.
 ///
 static inline bool
-text_read_integer(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
+text_read_integer(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 		int64_t *value, char *delim)
 {
 	char buffer[MAX_TOKEN_SIZE];
 
 	if (!text_nul_read_until(fd, line_no, col_no, bytes, buffer, sizeof buffer, true, true, false,
-			delim, !legacy)) {
+			delim)) {
 		return false;
 	}
 
@@ -277,7 +272,6 @@ text_read_integer(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, in
 /// The value is delimited by the given delimiter characters.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -287,13 +281,13 @@ text_read_integer(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, in
 /// @result         `true`, if successful.
 ///
 static inline bool
-text_read_double(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
+text_read_double(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 		double *value, char *delim)
 {
 	char buffer[MAX_TOKEN_SIZE];
 
 	if (!text_nul_read_until(fd, line_no, col_no, bytes, buffer, sizeof buffer, false, false, true,
-			delim, !legacy)) {
+			delim)) {
 		return false;
 	}
 
@@ -316,7 +310,6 @@ text_read_double(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int
 /// is returned.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -327,10 +320,10 @@ text_read_double(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_string(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
+text_parse_string(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 		void **buffer, size_t *size, size_t extra)
 {
-	if (!text_read_size(fd, legacy, line_no, col_no, bytes, size, " ")) {
+	if (!text_read_size(fd, line_no, col_no, bytes, size, " ")) {
 		err("Error while reading string size");
 		return false;
 	}
@@ -354,7 +347,6 @@ text_parse_string(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, in
 /// Reads and parses a BLOB from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -365,10 +357,10 @@ text_parse_string(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, in
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_data(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
+text_parse_data(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 		void **buffer, size_t *size, size_t extra)
 {
-	if (!text_read_size(fd, legacy, line_no, col_no, bytes, size, " ")) {
+	if (!text_read_size(fd, line_no, col_no, bytes, size, " ")) {
 		err("Error while reading data size");
 		return false;
 	}
@@ -392,7 +384,6 @@ text_parse_data(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int6
 /// Reads and parses an encoded BLOB from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -403,12 +394,12 @@ text_parse_data(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int6
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_data_dec(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
+text_parse_data_dec(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 		void **buffer, size_t *size, size_t extra)
 {
 	size_t enc_size;
 
-	if (!text_read_size(fd, legacy, line_no, col_no, bytes, &enc_size, " ")) {
+	if (!text_read_size(fd, line_no, col_no, bytes, &enc_size, " ")) {
 		err("Error while reading encoded data size");
 		return false;
 	}
@@ -450,7 +441,6 @@ text_parse_data_dec(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, 
 /// Reads and parses a key value from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -459,7 +449,7 @@ text_parse_data_dec(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, 
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_key(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
+text_parse_key(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 		as_record *rec)
 {
 	int32_t ch = read_char(fd, line_no, col_no, bytes);
@@ -479,7 +469,7 @@ text_parse_key(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 			return false;
 		}
 
-		if (!text_read_integer(fd, legacy, line_no, col_no, bytes, &int_val, "\n")) {
+		if (!text_read_integer(fd, line_no, col_no, bytes, &int_val, "\n")) {
 			err("Error while reading integer key value");
 			return false;
 		}
@@ -497,7 +487,7 @@ text_parse_key(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 			return false;
 		}
 
-		if (!text_read_double(fd, legacy, line_no, col_no, bytes, &fp_val, "\n")) {
+		if (!text_read_double(fd, line_no, col_no, bytes, &fp_val, "\n")) {
 			err("Error while reading floating-point key value");
 			return false;
 		}
@@ -517,13 +507,13 @@ text_parse_key(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 			return false;
 		}
 
-		if (ch == 'S' && !text_parse_string(fd, legacy, line_no, col_no, bytes,
+		if (ch == 'S' && !text_parse_string(fd, line_no, col_no, bytes,
 				&buffer, &size, 1)) {
 			err("Error while reading string key value");
 			return false;
 		}
 
-		if (ch == 'X' && !text_parse_data_dec(fd, legacy, line_no, col_no, bytes,
+		if (ch == 'X' && !text_parse_data_dec(fd, line_no, col_no, bytes,
 				&buffer, &size, 1)) {
 			err("Error while reading encoded string key value");
 			return false;
@@ -556,12 +546,12 @@ text_parse_key(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 		}
 
 		if (compact &&
-				!text_parse_data(fd, legacy, line_no, col_no, bytes, &buffer, &size, 0)) {
+				!text_parse_data(fd, line_no, col_no, bytes, &buffer, &size, 0)) {
 			err("Error while reading key bytes");
 			return false;
 		}
 
-		if (!compact && !text_parse_data_dec(fd, legacy, line_no, col_no, bytes,
+		if (!compact && !text_parse_data_dec(fd, line_no, col_no, bytes,
 				&buffer, &size, 0)) {
 			err("Error while reading encoded key bytes");
 			return false;
@@ -593,7 +583,6 @@ text_parse_key(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 /// Reads and parses a namespace from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param ns_vec   The (optional) source and (also optional) target namespace to be restored.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
@@ -603,10 +592,10 @@ text_parse_key(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_namespace(FILE *fd, bool legacy, as_vector *ns_vec, uint32_t *line_no, uint32_t *col_no,
+text_parse_namespace(FILE *fd, as_vector *ns_vec, uint32_t *line_no, uint32_t *col_no,
 		int64_t *bytes, as_record *rec)
 {
-	if (!text_nul_read_token(fd, legacy, line_no, col_no, bytes, rec->key.ns, sizeof rec->key.ns,
+	if (!text_nul_read_token(fd, line_no, col_no, bytes, rec->key.ns, sizeof rec->key.ns,
 			"\n")) {
 		err("Error while reading namespace token");
 		return false;
@@ -660,7 +649,6 @@ text_parse_digest(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 /// Reads and parses a set from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -669,10 +657,10 @@ text_parse_digest(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_set(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
+text_parse_set(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
 		as_record *rec)
 {
-	if (!text_nul_read_token(fd, legacy, line_no, col_no, bytes, rec->key.set, sizeof rec->key.set,
+	if (!text_nul_read_token(fd, line_no, col_no, bytes, rec->key.set, sizeof rec->key.set,
 			"\n")) {
 		err("Error while reading set token");
 		return false;
@@ -685,7 +673,6 @@ text_parse_set(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 /// Reads and parses a generation count from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -694,12 +681,12 @@ text_parse_set(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_generation(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no,
+text_parse_generation(FILE *fd, uint32_t *line_no, uint32_t *col_no,
 		int64_t *bytes, as_record *rec)
 {
 	int64_t val;
 
-	if (!text_read_integer(fd, legacy, line_no, col_no, bytes, &val, "\n")) {
+	if (!text_read_integer(fd, line_no, col_no, bytes, &val, "\n")) {
 		err("Error while reading generation count");
 		return false;
 	}
@@ -717,7 +704,6 @@ text_parse_generation(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no
 /// Reads and parses an expiration time from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
@@ -727,12 +713,12 @@ text_parse_generation(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_expiration(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no,
+text_parse_expiration(FILE *fd, uint32_t *line_no, uint32_t *col_no,
 		int64_t *bytes, as_record *rec, bool *expired)
 {
 	int64_t val;
 
-	if (!text_read_integer(fd, legacy, line_no, col_no, bytes, &val, "\n")) {
+	if (!text_read_integer(fd, line_no, col_no, bytes, &val, "\n")) {
 		err("Error while reading expiration time");
 		return false;
 	}
@@ -798,7 +784,6 @@ text_bytes_label_to_type(int32_t label, as_bytes_type *type)
 /// Reads and parses a bin from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param bin_vec  The bins to be restored, as a vector of bin name strings.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
@@ -808,7 +793,7 @@ text_bytes_label_to_type(int32_t label, as_bytes_type *type)
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uint32_t *col_no,
+text_parse_bin(FILE *fd, as_vector *bin_vec, uint32_t *line_no, uint32_t *col_no,
 		int64_t *bytes, as_record *rec)
 {
 	if (!expect_char(fd, line_no, col_no, bytes, '-') ||
@@ -845,7 +830,7 @@ text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uin
 
 	char name[MAX_TOKEN_SIZE];
 
-	if (!text_nul_read_token(fd, legacy, line_no, col_no, bytes, name, sizeof name, " \n")) {
+	if (!text_nul_read_token(fd, line_no, col_no, bytes, name, sizeof name, " \n")) {
 		err("Error while reading bin name token");
 		return false;
 	}
@@ -881,7 +866,7 @@ text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uin
 	if (ch == 'I') {
 		int64_t val;
 
-		if (!text_read_integer(fd, legacy, line_no, col_no, bytes, &val, "\n")) {
+		if (!text_read_integer(fd, line_no, col_no, bytes, &val, "\n")) {
 			err("Error while reading integer bin value");
 			return false;
 		}
@@ -902,7 +887,7 @@ text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uin
 	if (ch == 'D') {
 		double val;
 
-		if (!text_read_double(fd, legacy, line_no, col_no, bytes, &val, "\n")) {
+		if (!text_read_double(fd, line_no, col_no, bytes, &val, "\n")) {
 			err("Error while reading floating-point bin value");
 			return false;
 		}
@@ -924,13 +909,13 @@ text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uin
 		void *buffer;
 		size_t size;
 
-		if (ch == 'S' && !text_parse_string(fd, legacy, line_no, col_no, bytes,
+		if (ch == 'S' && !text_parse_string(fd, line_no, col_no, bytes,
 				&buffer, &size, 1)) {
 			err("Error while reading string bin value");
 			return false;
 		}
 
-		if (ch == 'X' && !text_parse_data_dec(fd, legacy, line_no, col_no, bytes,
+		if (ch == 'X' && !text_parse_data_dec(fd, line_no, col_no, bytes,
 				&buffer, &size, 1)) {
 			err("Error while reading encoded string bin value");
 			return false;
@@ -969,7 +954,7 @@ text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uin
 		void *buffer;
 		size_t size;
 
-		if (!text_parse_string(fd, legacy, line_no, col_no, bytes, &buffer, &size, 1)) {
+		if (!text_parse_string(fd, line_no, col_no, bytes, &buffer, &size, 1)) {
 			err("Error while reading geojson bin value");
 			return false;
 		}
@@ -1013,12 +998,12 @@ text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uin
 		return false;
 	}
 
-	if (compact && !text_parse_data(fd, legacy, line_no, col_no, bytes, &buffer, &size, 0)) {
+	if (compact && !text_parse_data(fd, line_no, col_no, bytes, &buffer, &size, 0)) {
 		err("Error while reading data bin value");
 		return false;
 	}
 
-	if (!compact && !text_parse_data_dec(fd, legacy, line_no, col_no, bytes, &buffer, &size, 0)) {
+	if (!compact && !text_parse_data_dec(fd, line_no, col_no, bytes, &buffer, &size, 0)) {
 		err("Error while reading encoded data bin value");
 		return false;
 	}
@@ -1050,7 +1035,6 @@ text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uin
 /// Reads and parses the bins of a record from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param bin_vec  The bins to be restored, as a vector of bin name strings.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
@@ -1060,12 +1044,12 @@ text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uin
 /// @result         `true`, if successful.
 ///
 static bool
-text_parse_bins(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uint32_t *col_no,
+text_parse_bins(FILE *fd, as_vector *bin_vec, uint32_t *line_no, uint32_t *col_no,
 		int64_t *bytes, as_record *rec)
 {
 	int64_t val;
 
-	if (!text_read_integer(fd, legacy, line_no, col_no, bytes, &val, "\n")) {
+	if (!text_read_integer(fd, line_no, col_no, bytes, &val, "\n")) {
 		err("Error while reading bin count");
 		return false;
 	}
@@ -1088,7 +1072,7 @@ text_parse_bins(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, ui
 	}
 
 	for (uint32_t i = 0; i < n_bins; ++i) {
-		if (!text_parse_bin(fd, legacy, bin_vec, line_no, col_no, bytes, rec)) {
+		if (!text_parse_bin(fd, bin_vec, line_no, col_no, bytes, rec)) {
 			return false;
 		}
 	}
@@ -1100,7 +1084,6 @@ text_parse_bins(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, ui
 /// Reads and parses a record from the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param legacy   Indicates a version 3.0 backup file.
 /// @param ns_vec   The (optional) source and (also optional) target namespace to be restored.
 /// @param bin_vec  The bins to be restored, as a vector of bin name strings.
 /// @param line_no  The current line number.
@@ -1112,7 +1095,7 @@ text_parse_bins(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, ui
 /// @result         See @ref decoder_status.
 ///
 static decoder_status
-text_parse_record(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, uint32_t *line_no,
+text_parse_record(FILE *fd, as_vector *ns_vec, as_vector *bin_vec, uint32_t *line_no,
 		uint32_t *col_no, int64_t *bytes, as_record *rec, bool *expired)
 {
 	decoder_status res = DECODER_ERROR;
@@ -1156,11 +1139,11 @@ text_parse_record(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, 
 
 		switch (i) {
 		case 0:
-			ok = text_parse_key(fd, legacy, line_no, col_no, bytes, rec);
+			ok = text_parse_key(fd, line_no, col_no, bytes, rec);
 			break;
 
 		case 1:
-			ok = text_parse_namespace(fd, legacy, ns_vec, line_no, col_no, bytes, rec);
+			ok = text_parse_namespace(fd, ns_vec, line_no, col_no, bytes, rec);
 			break;
 
 		case 2:
@@ -1168,19 +1151,19 @@ text_parse_record(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, 
 			break;
 
 		case 3:
-			ok = text_parse_set(fd, legacy, line_no, col_no, bytes, rec);
+			ok = text_parse_set(fd, line_no, col_no, bytes, rec);
 			break;
 
 		case 4:
-			ok = text_parse_generation(fd, legacy, line_no, col_no, bytes, rec);
+			ok = text_parse_generation(fd, line_no, col_no, bytes, rec);
 			break;
 
 		case 5:
-			ok = text_parse_expiration(fd, legacy, line_no, col_no, bytes, rec, &tmp_expired);
+			ok = text_parse_expiration(fd, line_no, col_no, bytes, rec, &tmp_expired);
 			break;
 
 		case 6:
-			ok = text_parse_bins(fd, legacy, bin_vec, line_no, col_no, bytes, rec);
+			ok = text_parse_bins(fd, bin_vec, line_no, col_no, bytes, rec);
 			break;
 		}
 
@@ -1242,7 +1225,7 @@ text_parse_global(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes)
 /// See backup_decoder.parse for details.
 ///
 decoder_status
-text_parse(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, uint32_t *orig_line_no,
+text_parse(FILE *fd, as_vector *ns_vec, as_vector *bin_vec, uint32_t *orig_line_no,
 		cf_atomic64 *total, as_record *rec, bool *expired)
 {
 	decoder_status res = DECODER_ERROR;
@@ -1269,13 +1252,13 @@ text_parse(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, uint32_
 
 	++bytes;
 
-	if (!legacy && ch == GLOBAL_PREFIX[0]) {
+	if (ch == GLOBAL_PREFIX[0]) {
 		res = text_parse_global(fd, line_no, col_no, &bytes);
 		goto out;
 	}
 
 	if (ch == RECORD_META_PREFIX[0]) {
-		res = text_parse_record(fd, legacy, ns_vec, bin_vec, line_no, col_no, &bytes, rec,
+		res = text_parse_record(fd, ns_vec, bin_vec, line_no, col_no, &bytes, rec,
 				expired);
 		goto out;
 	}

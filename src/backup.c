@@ -188,7 +188,7 @@ open_file(uint64_t *bytes, const char *file_path, const char *ns,
 	*fd_buf = safe_malloc(IO_BUF_SIZE);
 	setbuffer(*fd, *fd_buf, IO_BUF_SIZE);
 
-	if (fprintf_bytes(bytes, *fd, "Version " VERSION_3_1 "\n") < 0) {
+	if (fprintf_bytes(bytes, *fd, "Validation Version " VERSION_1_1 "\n") < 0) {
 		err_code("Error while writing header to validation file %s", file_path);
 		close_file(fd, fd_buf);
 		return false;

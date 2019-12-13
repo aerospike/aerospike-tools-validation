@@ -52,7 +52,6 @@ typedef struct {
 	/// Reads, parses, and returns the next entity from a backup file descriptor.
 	///
 	/// @param fd        The file descriptor.
-	/// @param legacy    Indicates a version 3.0 backup file.
 	/// @param ns_vec    The (optional) source and (also optional) target namespace to be restored.
 	/// @param bin_vec   The bins to be restored, as a vector of strings.
 	/// @param line_no   The current line number.
@@ -64,7 +63,7 @@ typedef struct {
 	///
 	/// @result          See @ref decoder_status.
 	///
-	decoder_status (*parse)(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec,
+	decoder_status (*parse)(FILE *fd, as_vector *ns_vec, as_vector *bin_vec,
 			uint32_t *line_no, cf_atomic64 *total, as_record *rec, bool *expired);
 } backup_decoder;
 
@@ -148,7 +147,6 @@ typedef struct {
 	                        ///  restored, as a vector of strings.
 	as_vector *bin_vec;     ///< The bins to be restored, as a vector of bin name strings.
 	as_vector *set_vec;     ///< The sets to be restored, as a vector of set name strings.
-	bool legacy;            ///< Indicates a version 3.0 backup file.
 } restore_thread_args;
 
 ///
@@ -173,8 +171,6 @@ typedef struct {
 	                            ///  Copied from restore_thread_args.bin_vec.
 	as_vector *set_vec;         ///< The sets to be restored, as a vector of set name strings.
 	                            ///  Copied from restore_thread_args.set_vec.
-	bool legacy;                ///< Indicates a version 3.0 backup file. Copied from
-	                            ///  restore_thread_args.legacy.
 	uint64_t stat_records;      ///< The number of records for which we have collected timing stats.
 	cf_clock read_time;         ///< The time spent on reading records on this thread.
 	cf_clock store_time;        ///< The time spent on storing records on this thread.

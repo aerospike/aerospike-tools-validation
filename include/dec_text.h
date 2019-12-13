@@ -27,5 +27,5 @@
 #include <shared.h>
 #include <restore.h>
 
-decoder_status text_parse(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec,
+decoder_status text_parse(FILE *fd, as_vector *ns_vec, as_vector *bin_vec,
 		uint32_t *orig_line_no, cf_atomic64 *total, as_record *rec, bool *expired);

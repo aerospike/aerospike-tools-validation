@@ -88,7 +88,6 @@ close_file(FILE **fd, void **fd_buf)
 /// @param ns_vec      The (optional) source and (also optional) target namespace to be restored.
 /// @param fd          The file descriptor of the opened backup file.
 /// @param fd_buf      The I/O buffer allocated for the file descriptor.
-/// @param legacy      Indicates a version 3.0 backup file.
 /// @param line_no     The current line number.
 /// @param first_file  Indicates that the backup file may contain secondary index information and
 ///                    UDF files, i.e., it was the first backup file written during backup.
@@ -99,7 +98,7 @@ close_file(FILE **fd, void **fd_buf)
 /// @result            `true`, if successful.
 ///
 static bool
-open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bool *legacy,
+open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf,
 		uint32_t *line_no, bool *first_file, cf_atomic64 *total, off_t *size)
 {
 	if (verbose) {
@@ -160,7 +159,7 @@ open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bo
 	}
 
 	bool res = false;
-	char version[13];
+	char version[24];
 	memset(version, 0, sizeof version);
 
 	if (fgets(version, sizeof version, *fd) == NULL) {
@@ -168,15 +167,13 @@ open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bo
 		goto cleanup1;
 	}
 
-	if (strncmp("Version ", version, 8) != 0 || version[11] != '\n' || version[12] != 0) {
+	if (strncmp("Validation Version ", version, 19) != 0 || version[22] != '\n' || version[23] != 0) {
 		err("Invalid version line in validation file %s", file_path);
 		hex_dump_err(version, sizeof version);
 		goto cleanup1;
 	}
 
-	*legacy = strncmp(version + 8, VERSION_3_0, 3) == 0;
-
-	if (!(*legacy) && strncmp(version + 8, VERSION_3_1, 3) != 0) {
+	if (strncmp(version + 19, VERSION_1_1, 3) != 0) {
 		err("Invalid validation file version %.3s in validation file %s", version + 8, file_path);
 		hex_dump_err(version, sizeof version);
 		goto cleanup1;
@@ -485,7 +482,6 @@ restore_thread_func(void *cont)
 		ptc.ns_vec = args.ns_vec;
 		ptc.bin_vec = args.bin_vec;
 		ptc.set_vec = args.set_vec;
-		ptc.legacy = args.legacy;
 		ptc.stat_records = 0;
 		ptc.read_time = 0;
 		ptc.store_time = 0;
@@ -503,7 +499,7 @@ restore_thread_func(void *cont)
 		} else {
 			inf("Restoring %s", ptc.path);
 
-			if (!open_file(ptc.path, ptc.ns_vec, &ptc.fd, &ptc.fd_buf, &ptc.legacy, ptc.line_no,
+			if (!open_file(ptc.path, ptc.ns_vec, &ptc.fd, &ptc.fd_buf, ptc.line_no,
 					NULL, &ptc.conf->total_bytes, NULL)) {
 				err("Error while opening validation file");
 				break;
@@ -571,7 +567,7 @@ restore_thread_func(void *cont)
 			}
 
 			cf_clock read_start = verbose ? cf_getus() : 0;
-			decoder_status res = ptc.conf->decoder->parse(ptc.fd, ptc.legacy, ptc.ns_vec,
+			decoder_status res = ptc.conf->decoder->parse(ptc.fd, ptc.ns_vec,
 					ptc.bin_vec, ptc.line_no, &ptc.conf->total_bytes, &rec, &expired);
 			cf_clock read_time = verbose ? cf_getus() - read_start : 0;
 
@@ -1641,7 +1637,6 @@ main(int32_t argc, char **argv)
 	restore_args.path = NULL;
 	restore_args.shared_fd = NULL;
 	restore_args.line_no = NULL;
-	restore_args.legacy = false;
 	cf_queue *job_queue = cf_queue_create(sizeof (restore_thread_args), true);
 
 	if (job_queue == NULL) {
@@ -1751,8 +1746,7 @@ main(int32_t argc, char **argv)
 
 		// open the file, file descriptor goes to restore_args.shared_fd
 		if (!open_file(conf.input_file, restore_args.ns_vec, &restore_args.shared_fd, &fd_buf,
-				&restore_args.legacy, &line_no, NULL, &conf.total_bytes,
-				&conf.estimated_bytes)) {
+				&line_no, NULL, &conf.total_bytes, &conf.estimated_bytes)) {
 			err("Error while opening shared validation file");
 			goto cleanup6;
 		}
