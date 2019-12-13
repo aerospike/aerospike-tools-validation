@@ -2466,19 +2466,6 @@ main(int32_t argc, char **argv)
 
 	inf("Namespace contains %" PRIu64 " record(s)", conf.rec_count_estimate);
 
-	bool has_ldt;
-
-	if (!check_for_ldt(&as, scan.ns, node_names, n_node_names, &has_ldt)) {
-		err("Error while checking for LDT");
-		goto cleanup5;
-	}
-
-	if (has_ldt) {
-		err("The cluster has LDT enabled for namespace %s; please use an older version of "
-				"this tool to create a validation", scan.ns);
-		goto cleanup5;
-	}
-
 	if (conf.directory != NULL && !clean_directory(conf.directory, conf.remove_files)) {
 		goto cleanup5;
 	}
