@@ -86,20 +86,14 @@ BACKUP_SRC := $(DIR_SRC)/backup.c $(DIR_SRC)/conf.c $(DIR_SRC)/utils.c $(DIR_SRC
 BACKUP_OBJ := $(call src_to_obj, $(BACKUP_SRC))
 BACKUP_DEP := $(call obj_to_dep, $(BACKUP_OBJ))
 
-RESTORE_INC := $(DIR_INC)/restore.h $(DIR_INC)/dec_text.h $(DIR_INC)/shared.h $(DIR_INC)/utils.h $(DIR_INC)/msgpack_in.h
-RESTORE_SRC := $(DIR_SRC)/restore.c $(DIR_SRC)/conf.c $(DIR_SRC)/utils.c $(DIR_SRC)/dec_text.c $(DIR_SRC)/msgpack_in.c
-RESTORE_OBJ := $(call src_to_obj, $(RESTORE_SRC))
-RESTORE_DEP := $(call obj_to_dep, $(RESTORE_OBJ))
-
 BACKUP := $(DIR_BIN)/asvalidation
-RESTORE := $(DIR_BIN)/ascorrection
 TOML := $(DIR_TOML)/libtoml.a
 
-INCS := $(BACKUP_INC) $(RESTORE_INC)
-SRCS := $(BACKUP_SRC) $(RESTORE_SRC)
-OBJS := $(BACKUP_OBJ) $(RESTORE_OBJ)
-DEPS := $(BACKUP_DEP) $(RESTORE_DEP)
-BINS := $(TOML) $(BACKUP) $(RESTORE)
+INCS := $(BACKUP_INC)
+SRCS := $(BACKUP_SRC)
+OBJS := $(BACKUP_OBJ)
+DEPS := $(BACKUP_DEP)
+BINS := $(TOML) $(BACKUP)
 
 # sort removes duplicates
 INCS := $(sort $(INCS))
@@ -140,9 +134,6 @@ $(DIR_OBJ)/%.o: $(DIR_SRC)/%.c | $(DIR_OBJ)
 
 $(BACKUP): $(BACKUP_OBJ) | $(DIR_BIN)
 	$(CC) $(LDFLAGS) -o $(BACKUP) $(BACKUP_OBJ) $(LIBRARIES)
-
-$(RESTORE): $(RESTORE_OBJ) | $(DIR_BIN)
-	$(CC) $(LDFLAGS) -o $(RESTORE) $(RESTORE_OBJ) $(LIBRARIES)
 
 $(TOML):
 	$(MAKE) -C $(DIR_TOML)
