@@ -613,9 +613,74 @@ extern bool
 as_cdt_add_packed(as_packer* pk, as_operations* ops, const as_bin_name name, as_operator op_type);
 
 static void
-cdt_fix_list(aerospike *as, as_record *rec)
+cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
+		cdt_stats *stat)
 {
+	if (! cf->nf_list_order && cf->nf_padding != 0) { // fix padding only
+		as_error error;
+		as_bytes *b = (as_bytes *)bin->valuep;
 
+		as_bytes_truncate(b, cf->nf_padding);
+
+		if (aerospike_key_put(as, &error, NULL, &rec->key, rec) !=
+				AEROSPIKE_OK) {
+			err("aerospike_key_put() returned %d - %s", error.code, error.message);
+			cf_atomic32_incr(&stat->nf_failed);
+			return;
+		}
+
+		cf_atomic32_incr(&stat->fixed);
+		return;
+	}
+
+	as_operations ops;
+	as_operations_init(&ops, 2);
+
+	as_operations_add_list_clear(&ops, bin->name);
+
+	uint32_t new_buf_sz =
+			as_pack_list_header_get_size(4) + // OP list hdr
+			1 + // append items OP code
+			as_pack_list_header_get_size(cf->ele_count) + // value_list hdr
+			cf->content_sz + // value_list contents
+			1 + // create flags
+			1; // modify flags
+
+	// add list append items
+	as_packer pk = {
+			.buffer = malloc(new_buf_sz),
+			.capacity = new_buf_sz
+	};
+
+	as_pack_list_header(&pk, 4);
+	as_pack_uint64(&pk, 2); // list append items OP code
+
+	as_pack_list_header(&pk, cf->ele_count);
+	memcpy(pk.buffer + pk.offset, cf->contents, cf->content_sz);
+	pk.offset += cf->content_sz;
+
+	as_pack_uint64(&pk, AS_LIST_ORDERED); // create flags
+	as_pack_uint64(&pk, AS_LIST_WRITE_ADD_UNIQUE); // modify flags
+
+	if (! as_cdt_add_packed(&pk, &ops, bin->name, AS_OPERATOR_CDT_MODIFY)) {
+		err("as_cdt_add_packed() failed");
+		as_operations_destroy(&ops);
+		cf_atomic32_incr(&stat->nf_failed);
+		return;
+	}
+
+	as_error error;
+
+	if (aerospike_key_operate(as, &error, NULL, &rec->key, &ops, &rec) !=
+			AEROSPIKE_OK) {
+		err("as_testlist_op() returned %d - %s", error.code, error.message);
+		as_operations_destroy(&ops);
+		cf_atomic32_incr(&stat->nf_failed);
+		return;
+	}
+
+	as_operations_destroy(&ops);
+	cf_atomic32_incr(&stat->fixed);
 }
 
 // Return true to log the record.
@@ -658,71 +723,9 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 			continue;
 		}
 
-		if (! cf.nf_list_order && cf.nf_padding != 0) { // fix padding only
-			as_error error;
-
-			as_bytes_truncate(b, cf.nf_padding);
-
-			if (aerospike_key_put(as, &error, NULL, &rec->key, rec) !=
-					AEROSPIKE_OK) {
-				err("aerospike_key_put() returned %d - %s", error.code, error.message);
-				cf_atomic32_incr(&bc->cdt_list.nf_failed);
-				continue;
-			}
-
-			cf_atomic32_incr(&bc->cdt_list.fixed);
-			continue;
+		if (b_type == AS_BYTES_LIST) {
+			cdt_fix_list(as, rec, bin, &cf, &bc->cdt_list);
 		}
-
-		as_operations ops;
-		as_operations_init(&ops, 2);
-
-		as_operations_add_list_clear(&ops, rec->bins.entries[i].name);
-
-		uint32_t new_buf_sz =
-				as_pack_list_header_get_size(4) + // OP list hdr
-				1 + // append items OP code
-				as_pack_list_header_get_size(cf.ele_count) + // value_list hdr
-				cf.content_sz + // value_list contents
-				1 + // create flags
-				1; // modify flags
-
-		// add list append items
-		as_packer pk = {
-				.buffer = malloc(new_buf_sz),
-				.capacity = new_buf_sz
-		};
-
-		as_pack_list_header(&pk, 4);
-		as_pack_uint64(&pk, 2); // list append items OP code
-
-		as_pack_list_header(&pk, cf.ele_count);
-		memcpy(pk.buffer + pk.offset, cf.contents, cf.content_sz);
-		pk.offset += cf.content_sz;
-
-		as_pack_uint64(&pk, AS_LIST_ORDERED); // create flags
-		as_pack_uint64(&pk, AS_LIST_WRITE_ADD_UNIQUE); // modify flags
-
-		if (! as_cdt_add_packed(&pk, &ops, rec->bins.entries[i].name,
-				AS_OPERATOR_CDT_MODIFY)) {
-			err("as_cdt_add_packed() failed");
-			as_operations_destroy(&ops);
-			cf_atomic32_incr(&bc->cdt_list.nf_failed);
-			continue;
-		}
-
-		as_error error;
-
-		if (aerospike_key_operate(as, &error, NULL, &rec->key, &ops, &rec) !=
-				AEROSPIKE_OK) {
-			err("as_testlist_op() returned %d - %s", error.code, error.message);
-			as_operations_destroy(&ops);
-			cf_atomic32_incr(&bc->cdt_list.nf_failed);
-			continue;
-		}
-
-		as_operations_destroy(&ops);
-		cf_atomic32_incr(&bc->cdt_list.fixed);
 	}
 
 	return need_log;
