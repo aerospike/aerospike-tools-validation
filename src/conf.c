@@ -530,11 +530,11 @@ config_backup(toml_table_t *conftab, backup_config *c, const char *instance,
 		char errbuf[])
 {
 	// Defaults to "asbackup" section in case present.
-	toml_table_t *curtab = toml_table_in(conftab, "asbackup");
+	toml_table_t *curtab = toml_table_in(conftab, "asvalidation");
 
-	char asbackup[256] = {"asbackup"};
+	char asbackup[256] = {"asvalidation"};
 	if (instance) {
-		snprintf(asbackup, 255, "asbackup_%s", instance);
+		snprintf(asbackup, 255, "asvalidation_%s", instance);
 		// override if it exists otherwise use
 		// default section
 		if (toml_table_in(conftab, asbackup)) {
@@ -660,11 +660,11 @@ config_restore(toml_table_t *conftab, restore_config *c, const char *instance,
 		char errbuf[])
 {
 	// Defaults to "asrestore" section in case present.
-	toml_table_t *curtab = toml_table_in(conftab, "asrestore");
+	toml_table_t *curtab = toml_table_in(conftab, "ascorrection");
 
-	char asrestore[256] = {"asrestore"};
+	char asrestore[256] = {"ascorrection"};
 	if (instance) {
-		snprintf(asrestore, 255, "asrestore_%s", instance);
+		snprintf(asrestore, 255, "ascorrection_%s", instance);
 		// override if it exists otherwise use
 		// default section
 		if (toml_table_in(conftab, asrestore)) {
@@ -731,9 +731,6 @@ config_restore(toml_table_t *conftab, restore_config *c, const char *instance,
 
 		} else if (! strcasecmp("nice-list", name)) {
 			status = config_str(curtab, name, (void*)&c->nice_list);
-
-		} else if (! strcasecmp("wait", name)) {
-			status = config_bool(curtab, name, (void*)&c->wait);
 
 		} else if (! strcasecmp("timeout", name)) {
 			status = config_int(curtab, name, (void*)&i_val);

@@ -108,8 +108,6 @@ typedef struct {
 	volatile uint64_t byte_count_limit; ///< The current limit for byte_count_total for throttling.
 	                                    ///  This is periodically increased by the counter thread to
 	                                    ///  raise the limit according to the bandwidth limit.
-	volatile uint32_t index_count;      ///< The number of secondary indexes backed up.
-	volatile uint32_t udf_count;        ///< The number of UDF files backed up.
 	char *auth_mode;					///< Authentication mode
 
 	bool cdt_fix;

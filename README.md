@@ -1,6 +1,4 @@
-## Aerospike Backup Tools
-
-This is the developer documentation. For user documentation, please consult http://www.aerospike.com/docs/tools/backup.
+# Aerospike Validation Tools
 
 ## Building
 
@@ -20,7 +18,7 @@ Then set the `CLIENTREPO` environment variable to point to the `aerospike-client
 
 Now clone the source code of the Aerospike backup tools from GitHub.
 
-    git clone https://github.com/aerospike/aerospike-tools-backup
+    git clone https://github.com/aerospike/aerospike-tools-validation
 
 Then build the backup tools and generate the Doxygen documentation.
 
@@ -28,7 +26,7 @@ Then build the backup tools and generate the Doxygen documentation.
     make
     make docs
 
-This gives you three binaries in the `bin` subdirectory -- `asbackup`, `asrestore`, and `fill` -- as well as the Doxygen HTML documentation in `docs`. Open `docs/index.html` to access the generated documentation.
+This gives you two binaries in the `bin` subdirectory -- `asvalidation` and `ascorrection` -- as well as the Doxygen HTML documentation in `docs`. Open `docs/index.html` to access the generated documentation.
 
 In order to run the tests that come with the code, you need `asd` installed in `/usr/bin`. The tests invoke `asd` with a separate configuration file, so that your regular database environment remains untouched.
 
@@ -38,36 +36,36 @@ Please make sure that your `python` command is Python 2 and that you have `virtu
 
 This creates a virtual Python environment in a new subdirectory (`env`), activates it, and installs the Python packages required by the tests. Then the actual tests run.
 
-## Backup Source Code
+## Validation Source Code
 
-Let's take a quick look at the overall structure of the `asbackup` source code, at `src/backup.c`. The code does the following, starting at `main()`.
+Let's take a quick look at the overall structure of the `asvalidation` source code, at `src/backup.c`. The code does the following, starting at `main()`.
 
   * Parse command line options into local variables or, if they need to be passed to a worker thread later, into a `backup_config` structure.
   * Initialize an Aerospike client and connect it to the cluster to be backed up.
-  * Create the counter thread, which starts at `counter_thread_func()`. That's the thread that outputs the status and counter updates during the backup, among other things.
-  * When backing up to a single file (`--output-file` option, as opposed to backing up to a directory using `--directory`), create and open that backup file.
+  * Create the counter thread, which starts at `counter_thread_func()`. That's the thread that outputs the status and counter updates during the validation, among other things.
+  * When backing up to a single file (`--output-file` option, as opposed to backing up to a directory using `--directory`), create and open that validation file.
   * Populate a `backup_thread_args` structure for each node to be backed up and submit it to the `job_queue` queue. Note two things:
     - Only one of the `backup_thread_args` structures gets its `first` member set to `true`.
-    - When backing up to a single file, the `shared_fd` member gets the file handle of the created backup file (and `NULL` otherwise).
-  * Spawn backup worker threads, which start at `backup_thread_func()`. There's one of those for each cluster node to be backed up.
-  * Wait for all backup worker threads to finish.
+    - When backing up to a single file, the `shared_fd` member gets the file handle of the created validation file (and `NULL` otherwise).
+  * Spawn validation worker threads, which start at `backup_thread_func()`. There's one of those for each cluster node to be backed up.
+  * Wait for all validation worker threads to finish.
   * When backing up to a single file, close that file.
   * Shut down the Aerospike client.
 
 Let's now look at what the worker threads do, starting at `backup_thread_func()`.
 
   * Pop a `backup_thread_args` structure off the job queue. The job queue contains exactly one of those for each thread.
-  * Initialize a `per_node_context` structure. That's where all the data local to a worker thread is kept. Some of the data is initialized from the `backup_thread_args` structure. In particular, when backing up to a single file, the `fd` member of the `per_node_context` structure is initialized from the `shared_fd` member of the `backup_thread_args` structure. In that way, all backup threads share the same backup file handle.
-  * When backing up to a directory, open an exclusive backup file for the worker thread by invoking `open_dir_file()`.
-  * If the backup thread is the single thread that has `first` set to `true` in its `backup_thread_args` structure, store secondary index definitions by invoking `process_secondary_indexes()`, and store UDF files by invoking `process_udfs()`. So, this work is done by a single thread, and that thread is chosen by setting its `first` member to `true`.
+  * Initialize a `per_node_context` structure. That's where all the data local to a worker thread is kept. Some of the data is initialized from the `backup_thread_args` structure. In particular, when backing up to a single file, the `fd` member of the `per_node_context` structure is initialized from the `shared_fd` member of the `backup_thread_args` structure. In that way, all validation threads share the same validation file handle.
+  * When backing up to a directory, open an exclusive validation file for the worker thread by invoking `open_dir_file()`.
+  * If the validation thread is the single thread that has `first` set to `true` in its `backup_thread_args` structure, store secondary index definitions by invoking `process_secondary_indexes()`, and store UDF files by invoking `process_udfs()`. So, this work is done by a single thread, and that thread is chosen by setting its `first` member to `true`.
   * All other threads wait for the chosen thread to finish its secondary index and UDF file work by invoking `wait_one_shot()`. The chosen thread signals completion by invoking `signal_one_shot()`.
-  * Initiate backup of records by invoking `aerospike_scan_node()` with `scan_callback()` as the callback function that gets invoked for each record in the namespace to be backed up. From here on, all worker threads work in parallel.
+  * Initiate validation of records by invoking `aerospike_scan_node()` with `scan_callback()` as the callback function that gets invoked for each record in the namespace to be backed up. From here on, all worker threads work in parallel.
 
 Let's now look at what the callback function, `scan_callback()`, does.
 
-  * When backing up to a directory and the current backup file of a worker thread has grown beyond its maximal size, switch to a new backup file by invoking `close_dir_file()` for the old and `open_dir_file()` for the new backup file.
-  * When backing up to a single file, acquire the file lock by invoking `safe_lock()`. As all worker threads share the same backup file, we can only allow one thread to write at a time.
-  * Invoke the `put_record()` function of the backup encoder for the current record. The encoder implements the backup file format by taking record information and serializing it to the backup file. Its code is in `src/enc_text.c`, its interface in `include/enc_text.h`. Besides `put_record()`, the interface contains `put_secondary_index()` and `put_udf_file()`, which are used to store secondary index definitions and UDF files in a backup file.
+  * When backing up to a directory and the current validation file of a worker thread has grown beyond its maximal size, switch to a new validation file by invoking `close_dir_file()` for the old and `open_dir_file()` for the new validation file.
+  * When backing up to a single file, acquire the file lock by invoking `safe_lock()`. As all worker threads share the same validation file, we can only allow one thread to write at a time.
+  * Invoke the `put_record()` function of the validation encoder for the current record. The encoder implements the validation file format by taking record information and serializing it to the validation file. Its code is in `src/enc_text.c`, its interface in `include/enc_text.h`. Besides `put_record()`, the interface contains `put_secondary_index()` and `put_udf_file()`, which are used to store secondary index definitions and UDF files in a validation file.
   * When backing up to a single file, release the file lock.
 
 ## Restore Source Code
@@ -77,8 +75,8 @@ Let's now take a quick look at the overall structure of the `asrestore` source c
   * Parse command line options into local variables or, if they need to be passed to a worker thread later, into a `restore_config` structure.
   * Initialize an Aerospike client and connect it to the cluster to be restored.
   * Create the counter thread, which starts at `counter_thread_func()`. That's the thread that outputs the status and counter updates during the restore, among other things.
-  * When restoring from a directory (`--directory` option, as opposed to restoring from a single file using `--input-file`), collect all backup files from that directory. Then go through the backup files, find the one that has the secondary index definitions and UDF files in it, and parse that information by invoking `get_indexes_and_udfs()`. Then populate one `restore_thread_args` structure for each backup file and submit it to the `job_queue` queue.
-  * When restoring from a single file, open that file and populate the `shared_fd` member of the `restore_thread_args` structure with the file handle of that shared backup file. Then parse the secondary index definitions and UDF files from that file by invoking `get_indexes_and_udfs()`. Finally, submit one `restore_thread_args` structure for each worker thread to the job queue.
+  * When restoring from a directory (`--directory` option, as opposed to restoring from a single file using `--input-file`), collect all validation files from that directory. Then go through the validation files, find the one that has the secondary index definitions and UDF files in it, and parse that information by invoking `get_indexes_and_udfs()`. Then populate one `restore_thread_args` structure for each validation file and submit it to the `job_queue` queue.
+  * When restoring from a single file, open that file and populate the `shared_fd` member of the `restore_thread_args` structure with the file handle of that shared validation file. Then parse the secondary index definitions and UDF files from that file by invoking `get_indexes_and_udfs()`. Finally, submit one `restore_thread_args` structure for each worker thread to the job queue.
   * Restore the UDF files to the cluster by invoking `restore_udfs()`.
   * When secondary indexes are to be restored before any records, invoke `restore_indexes()` to create them.
   * Create the restore worker threads, which start at `restore_thread_func()`.
@@ -87,14 +85,14 @@ Let's now take a quick look at the overall structure of the `asrestore` source c
   * When restoring from a single file, close that file.
   * Shut down the Aerospike client.
 
-Let's now look at what the worker threads do, starting at `restore_thread_func()`. The code is pretty similar in structure to its counterpart in `asbackup`.
+Let's now look at what the worker threads do, starting at `restore_thread_func()`. The code is pretty similar in structure to its counterpart in `asvalidation`.
 
   * Pop a `restore_thread_args` structure off the job queue.
-  * Initialize a `per_thread_context` structure. That's where all the data local to a worker thread is kept. Some of the data is initialized from the `restore_thread_args` structure. In particular, when restoring from a single file, the `fd` member of the `per_thread_context` structure is initialized from the `shared_fd` member of the `restore_thread_args` structure. In that way, all restore threads share the same backup file handle.
-  * When restoring from a directory, open an exclusive backup file for the worker thread by invoking `open_file()`.
+  * Initialize a `per_thread_context` structure. That's where all the data local to a worker thread is kept. Some of the data is initialized from the `restore_thread_args` structure. In particular, when restoring from a single file, the `fd` member of the `per_thread_context` structure is initialized from the `shared_fd` member of the `restore_thread_args` structure. In that way, all restore threads share the same validation file handle.
+  * When restoring from a directory, open an exclusive validation file for the worker thread by invoking `open_file()`.
   * Set up the write policy, depending on the command line arguments given by the user.
-  * When restoring from a single file, acquire the file lock by invoking `safe_lock()`. As all worker threads read from the same backup file, we can only allow one thread to read at a time.
-  * Invoke the `parse()` function of the backup decoder to read the next record. The decoder is the counterpart to the encoder in `asbackup`. It implements the backup file format by deserializing record information from the the backup file. Its code is in `src/dec_text.c`, its interface in `include/dec_text.h`.
+  * When restoring from a single file, acquire the file lock by invoking `safe_lock()`. As all worker threads read from the same validation file, we can only allow one thread to read at a time.
+  * Invoke the `parse()` function of the validation decoder to read the next record. The decoder is the counterpart to the encoder in `asvalidation`. It implements the validation file format by deserializing record information from the the validation file. Its code is in `src/dec_text.c`, its interface in `include/dec_text.h`.
   * When backing up to a single file, release the file lock.
   * Invoke `aerospike_key_put()` to store the current record in the cluster.
 
@@ -161,42 +159,42 @@ The following options to `fill` are probably non-obvious.
 | `-k {key-type}`    | By default, we randomly pick an integer key, a string key, or a bytes key for each record. Specifying `integer`, `string`, or `bytes` as the `{key-type}` forces a random key of the given type to be created instead. |
 | `-c {tps-ceiling}` | Limits the total number of records put per second by the `fill` tool (TPS) to the given ceiling. Handy to prevent server overload. |
 | `-b`               | Enables benchmark mode, which speeds up the `fill` tool. In benchmark mode we generate just one single record for a fill job and repeatedly put this same record with different keys; all records of a job thus contain identical data. Without benchmark mode, each record to be put is re-generated from scratch, which results in unique data in each record. |
-| `-z`               | Enables fuzzing. Fuzzing uses random junk data for bin names, string and BLOB bin values, etc. in order to try to trip the backup file format parser. |
+| `-z`               | Enables fuzzing. Fuzzing uses random junk data for bin names, string and BLOB bin values, etc. in order to try to trip the validation file format parser. |
 
-## Backup File Format
+## Validation File Format
 
-Currently, there is only a single, text-based backup file format, which provides compatibility with previous versions of Aerospike. However, backup file formats are pluggable and a binary format could be supported in the future.
+Currently, there is only a single, text-based validation file format, which provides compatibility with previous versions of Aerospike. However, validation file formats are pluggable and a binary format could be supported in the future.
 
-Regardless of the format, any backup file starts with a header line that identifies it as an Aerospike backup file and specifies the version of the backup file format.
+Regardless of the format, any validation file starts with a header line that identifies it as an Aerospike validation file and specifies the version of the validation file format.
 
-    ["Version"] [SP] ["3.1"] [LF]
+    ["Version"] [SP] ["1.1"] [LF]
 
 Let's use the above to agree on a few things regarding notation.
 
-  * `["Version"]` is a 7-character string literal that consists of the letters `V`, `e`, `r`, `s`, `i`, `o`, and `n`. Likewise, `["3.1"]` is a 3-character string literal.
+  * `["Version"]` is a 7-character string literal that consists of the letters `V`, `e`, `r`, `s`, `i`, `o`, and `n`. Likewise, `["1.1"]` is a 3-character string literal.
 
   * `[SP]` is a single space character (ASCII code 32).
 
   * `[LF]` is a single line feed character (ASCII code 10).
 
-Note that the backup file format is pretty strict. When the specification says `[SP]`, it really means a single space character: not more than one, no tabs, etc. Also, `[LF]` really is a single line feed character: no carriage returns, not more than one (i.e., no empty lines), etc. Maybe it's helpful to look at the text-based format as a binary format that just happens to be readable by humans.
+Note that the validation file format is pretty strict. When the specification says `[SP]`, it really means a single space character: not more than one, no tabs, etc. Also, `[LF]` really is a single line feed character: no carriage returns, not more than one (i.e., no empty lines), etc. Maybe it's helpful to look at the text-based format as a binary format that just happens to be readable by humans.
 
 ### Meta Data Section
 
-The header line is always followed by zero or more lines that contain meta information about the backup file ("meta data section"). These lines always start with a `["#"] [SP]` prefix. Currently, there are two different meta information lines.
+The header line is always followed by zero or more lines that contain meta information about the validation file ("meta data section"). These lines always start with a `["#"] [SP]` prefix. Currently, there are two different meta information lines.
 
     ["#"] [SP] ["namespace"] [SP] [escape({namespace})] [LF]
     ["#"] [SP] ["first-file"] [LF]
 
-  * The first line specifies the namespace from which this backup file was created.
+  * The first line specifies the namespace from which this validation file was created.
 
-  * The second line marks this backup file as the first in a set of backup files. We discussed above what exactly this means and why it is important.
+  * The second line marks this validation file as the first in a set of validation files. We discussed above what exactly this means and why it is important.
 
-We also introduced a new notation, `escape(...)`. Technically, a namespace identifier can contain space characters or line feeds. As the backup file format uses spaces and line feeds as token separators, they need to be escaped when they appear inside a token. We escape a token by adding a backslash ("\\") character before any spaces, line feeds, and backslashes in the token. And that's what `escape(...)` means.
+We also introduced a new notation, `escape(...)`. Technically, a namespace identifier can contain space characters or line feeds. As the validation file format uses spaces and line feeds as token separators, they need to be escaped when they appear inside a token. We escape a token by adding a backslash ("\\") character before any spaces, line feeds, and backslashes in the token. And that's what `escape(...)` means.
 
 Escaping naively works on bytes. It thus works without having to know about character encodings. If we have a UTF-8 string that contains a byte with value 32, this byte will be escaped regardless of whether it is an actual space character or part of the encoding of a Unicode code point.
 
-We also introduced placeholders into the notation, which represent dynamic data. `{namespace}` is a placeholder for, and thus replaced by, the namespace that the backup file belongs to.
+We also introduced placeholders into the notation, which represent dynamic data. `{namespace}` is a placeholder for, and thus replaced by, the namespace that the validation file belongs to.
 
 For a namespace `Name Space`, the meta data line would look like this.
 
@@ -237,7 +235,7 @@ Here's what the placeholders stand for.
 | `{type}`    | The type of the UDF file. Currently always `L` for Lua. |
 | `{name}`    | The file name of the UDF file. |
 | `{length}`  | The length of the UDF file, which is a decimal unsigned 32-bit value. |
-| `{content}` | The content of the UDF file: `{length}` raw bytes of data. The UDF file is simply copied to the backup file. As we know the length of the UDF file, no escaping is required. Also, the UDF file will most likely contain line feeds, so this "line" will actually span multiple lines in the backup file. |
+| `{content}` | The content of the UDF file: `{length}` raw bytes of data. The UDF file is simply copied to the validation file. As we know the length of the UDF file, no escaping is required. Also, the UDF file will most likely contain line feeds, so this "line" will actually span multiple lines in the validation file. |
 
 ### Records Section
 
@@ -325,11 +323,11 @@ Actually, the above `["B"]` form is not the only way to represent bytes-valued b
 | `["L"]` | List value, opaquely represented as a bytes value. |
 | `["U"]` | LDT value, opaquely represented as a bytes value. Deprecated. |
 
-### Sample Backup File
+### Sample Validation File
 
 The following backup file contains two secondary indexes, a UDF file, and a record. The two empty lines stem from the UDF file, which contains two line feeds.
 
-    Version 3.1
+    Version 1.1
     # namespace test
     # first-file
     * i test test-set int-index N 1 int-bin N
@@ -348,34 +346,5 @@ The following backup file contains two secondary indexes, a UDF file, and a reco
 
 In greater detail:
 
-  * The backup was taken from namespace `test` and set `test-set`.
-
+  * The validation was taken from namespace `test` and set `test-set`.
   * The record never expires and it has two bins: an integer bin, `int-bin`, and a string bin, `string-bin`, with values `12345` and `"abcde"`, respectively.
-
-  * The secondary indexes are `int-index` for the integer bin and `string-index` for the string bin.
-
-  * The UDF file is `test.lua` and contains 27 bytes.
-
-Let's also look at the corresponding hex dump for a little more insight regarding the UDF file and its line feeds.
-
-    0000: 5665 7273 696f 6e20 332e 310a 2320 6e61  Version 3.1.# na
-    0010: 6d65 7370 6163 6520 7465 7374 0a23 2066  mespace test.# f
-    0020: 6972 7374 2d66 696c 650a 2a20 6920 7465  irst-file.* i te
-    0030: 7374 2074 6573 742d 7365 7420 696e 742d  st test-set int-
-    0040: 696e 6465 7820 4e20 3120 696e 742d 6269  index N 1 int-bi
-    0050: 6e20 4e0a 2a20 6920 7465 7374 2074 6573  n N.* i test tes
-    0060: 742d 7365 7420 7374 7269 6e67 2d69 6e64  t-set string-ind
-    0070: 6578 204e 2031 2073 7472 696e 672d 6269  ex N 1 string-bi
-    0080: 6e20 530a 2a20 7520 4c20 7465 7374 2e6c  n S.* u L test.l
-    0090: 7561 2032 3720 2d2d 206a 7573 7420 616e  ua 27 -- just an
-    00a0: 2065 6d70 7479 204c 7561 2066 696c 650a   empty Lua file.
-    00b0: 0a0a 2b20 6e20 7465 7374 0a2b 2064 2071  ..+ n test.+ d q
-    00c0: 2b4c 7369 4773 3167 4439 6475 4a44 627a  +LsiGs1gD9duJDbz
-    00d0: 5153 5879 7461 6a74 4359 3d0a 2b20 7320  QSXytajtCY=.+ s
-    00e0: 7465 7374 2d73 6574 0a2b 2067 2031 0a2b  test-set.+ g 1.+
-    00f0: 2074 2030 0a2b 2062 2032 0a2d 2049 2069   t 0.+ b 2.- I i
-    0100: 6e74 2d62 696e 2031 3233 3435 0a2d 2053  nt-bin 12345.- S
-    0110: 2073 7472 696e 672d 6269 6e20 3520 6162   string-bin 5 ab
-    0120: 6364 650a                                cde.
-
-The content of the Lua file consists of the 27 bytes at offsets 0x096 through 0x0b0. The line feed at 0xb0 still belongs to the Lua file, the line feed at 0xb1 is the line feed dictated by the backup file format.

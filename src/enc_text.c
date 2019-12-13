@@ -72,7 +72,7 @@ text_output_integer(uint64_t *bytes, FILE *fd, const char *prefix1, const char *
 	as_integer *v = as_integer_fromval(val);
 
 	if (fprintf_bytes(bytes, fd, "%s%s %" PRId64 "\n", prefix1, prefix2, v->value) < 0) {
-		err_code("Error while writing integer to backup file");
+		err_code("Error while writing integer to validation file");
 		return false;
 	}
 
@@ -99,7 +99,7 @@ text_output_double(uint64_t *bytes, FILE *fd, const char *prefix1, const char *p
 	as_double *v = as_double_fromval(val);
 
 	if (fprintf_bytes(bytes, fd, "%s%s %.17g\n", prefix1, prefix2, v->value) < 0) {
-		err_code("Error while writing double to backup file");
+		err_code("Error while writing double to validation file");
 		return false;
 	}
 
@@ -123,17 +123,17 @@ text_output_data(uint64_t *bytes, FILE *fd, const char *prefix1, const char *pre
 		void *buffer, size_t size)
 {
 	if (fprintf_bytes(bytes, fd, "%s%s %zu ", prefix1, prefix2, size) < 0) {
-		err_code("Error while writing data to backup file [1]");
+		err_code("Error while writing data to validation file [1]");
 		return false;
 	}
 
 	if (fwrite_bytes(bytes, buffer, size, 1, fd) != 1) {
-		err_code("Error while writing data to backup file [2]");
+		err_code("Error while writing data to validation file [2]");
 		return false;
 	}
 
 	if (fprintf_bytes(bytes, fd, "\n") < 0) {
-		err_code("Error while writing data to backup file [3]");
+		err_code("Error while writing data to validation file [3]");
 		return false;
 	}
 
@@ -283,7 +283,7 @@ text_output_value(uint64_t *bytes, FILE *fd, bool compact, const char *bin_name,
 {
 	if (val == NULL || val->type == AS_NIL) {
 		if (fprintf_bytes(bytes, fd, "- N %s\n", bin_name) < 0) {
-			err_code("Error while writing NIL value to backup file");
+			err_code("Error while writing NIL value to validation file");
 			return false;
 		}
 
@@ -358,18 +358,18 @@ text_put_record(uint64_t *bytes, FILE *fd, bool compact, const as_record *rec)
 	}
 
 	if (fprintf_bytes(bytes, fd, "+ n %s\n+ d %s\n", escape(rec->key.ns), enc) < 0) {
-		err_code("Error while writing record meta data to backup file [1]");
+		err_code("Error while writing record meta data to validation file [1]");
 		return false;
 	}
 
 	if (rec->key.set[0] != 0 && fprintf_bytes(bytes, fd, "+ s %s\n", escape(rec->key.set)) < 0) {
-		err_code("Error while writing record meta data to backup file [2]");
+		err_code("Error while writing record meta data to validation file [2]");
 		return false;
 	}
 
 	if (fprintf_bytes(bytes, fd, "+ g %d\n+ t %u\n+ b %d\n", rec->gen, expire,
 			rec->bins.size) < 0) {
-		err_code("Error while writing record meta data to backup file [3]");
+		err_code("Error while writing record meta data to validation file [3]");
 		return false;
 	}
 
@@ -380,116 +380,6 @@ text_put_record(uint64_t *bytes, FILE *fd, bool compact, const as_record *rec)
 			err("Error while writing record bin %s", bin->name);
 			return false;
 		}
-	}
-
-	return true;
-}
-
-///
-/// Maps a UDF type to its one-character label.
-///
-/// @param type  The UDF type.
-///
-/// @result      The one-character label, -1 if the given UDF type is invalid.
-///
-static int32_t
-text_udf_type_to_label(as_udf_type type)
-{
-	if (type == AS_UDF_TYPE_LUA) {
-		return 'L';
-	}
-
-	err("Invalid UDF type %d", (int32_t)type);
-	return -1;
-}
-
-///
-/// Part of the interface exposed by the text backup file format encoder.
-///
-/// See backup_encoder.put_udf_file for details.
-///
-bool
-text_put_udf_file(uint64_t *bytes, FILE *fd, const as_udf_file *file)
-{
-	int32_t type = text_udf_type_to_label(file->type);
-
-	if (type < 0) {
-		return false;
-	}
-
-	if (fprintf_bytes(bytes, fd, GLOBAL_PREFIX "u %c %s %u ", (char)type, escape(file->name),
-			file->content.size) < 0) {
-		err_code("Error while writing UDF function to backup file [1]");
-		return false;
-	}
-
-	if (fwrite_bytes(bytes, file->content.bytes, file->content.size, 1, fd) != 1) {
-		err_code("Error while writing UDF function to backup file [2]");
-		return false;
-	}
-
-	if (fprintf_bytes(bytes, fd, "\n") < 0) {
-		err_code("Error while writing UDF function to backup file [3]");
-		return false;
-	}
-
-	return true;
-}
-
-///
-/// Maps a secondary index type to its one-character label.
-///
-/// @param type  The secondary index type.
-///
-/// @result      The one-character label.
-///
-static int32_t
-text_index_type_to_label(index_type type)
-{
-	return "INLKV"[(int32_t)type];
-}
-
-///
-/// Maps a path data type to its one-character label.
-///
-/// @param type  The path data type.
-///
-/// @result      The one-character label.
-///
-static int32_t
-text_path_type_to_label(path_type type)
-{
-	return "ISNG"[(int32_t)type];
-}
-
-///
-/// Part of the interface exposed by the text backup file format encoder.
-///
-/// See backup_encoder.put_secondary_index for details.
-///
-bool
-text_put_secondary_index(uint64_t *bytes, FILE *fd, const index_param *index)
-{
-	if (fprintf_bytes(bytes, fd, GLOBAL_PREFIX "i %s %s %s %c %u",
-			escape(index->ns), index->set != NULL ? escape(index->set) : "", escape(index->name),
-			text_index_type_to_label(index->type), index->path_vec.size) < 0) {
-		err_code("Error while writing secondary index to backup file [1]");
-		return false;
-	}
-
-	for (uint32_t i = 0; i < index->path_vec.size; ++i) {
-		path_param *path = as_vector_get((as_vector *)&index->path_vec, i);
-
-		if (fprintf_bytes(bytes, fd, " %s %c", escape(path->path),
-				text_path_type_to_label(path->type)) < 0) {
-			err_code("Error while writing secondary index to backup file [2]");
-			return false;
-		}
-	}
-
-	if (fprintf_bytes(bytes, fd, "\n") < 0) {
-		err_code("Error while writing secondary index to backup file [3]");
-		return false;
 	}
 
 	return true;

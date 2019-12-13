@@ -27,5 +27,3 @@
 #include <shared.h>
 
 bool text_put_record(uint64_t *bytes, FILE *fd, bool compact, const as_record *rec);
-bool text_put_udf_file(uint64_t *bytes, FILE *fd, const as_udf_file *file);
-bool text_put_secondary_index(uint64_t *bytes, FILE *fd, const index_param *index);

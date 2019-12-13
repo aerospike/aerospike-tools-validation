@@ -148,7 +148,6 @@ extern bool get_info(aerospike *as, const char *value, const char *node_name, vo
 		info_callback callback, bool kv_split);
 extern bool get_migrations(aerospike *as, char (*node_names)[][AS_NODE_NAME_SIZE],
 		uint32_t n_node_names, uint64_t *mig_count);
-extern bool parse_index_info(char *ns, char *index_str, index_param *index);
 
 #define LIKELY(x) __builtin_expect(!!(x), 1)    ///< Marks an expression that is likely true.
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)  ///< Marks an expression that is unlikely true.
@@ -177,11 +176,11 @@ read_char(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes)
 	switch (ch) {
 	case EOF:
 		if (ferror(fd) != 0) {
-			err("Error while reading backup block (line %u, col %u)", line_no[0], col_no[0]);
+			err("Error while reading validation block (line %u, col %u)", line_no[0], col_no[0]);
 			return EOF;
 		}
 
-		err("Unexpected end of file in backup block (line %u, col %u)", line_no[0], col_no[0]);
+		err("Unexpected end of file in validation block (line %u, col %u)", line_no[0], col_no[0]);
 		return EOF;
 
 	case '\n':
@@ -274,7 +273,7 @@ static inline bool
 push_char(int32_t ch, FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes)
 {
 	if (UNLIKELY(ungetc(ch, fd) == EOF)) {
-		err("Error while pushing character in backup block (line %u, col %u)", line_no[0],
+		err("Error while pushing character in validation block (line %u, col %u)", line_no[0],
 				col_no[0]);
 		return false;
 	}
@@ -306,7 +305,7 @@ expect_char(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes, int32
 	}
 
 	if (UNLIKELY(x != ch)) {
-		err("Unexpected character %s in backup block (line %u, col %u), expected %s", print_char(x),
+		err("Unexpected character %s in validation block (line %u, col %u), expected %s", print_char(x),
 				line_no[0], col_no[0], print_char(ch));
 		return false;
 	}

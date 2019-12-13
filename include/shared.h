@@ -33,10 +33,8 @@
 #include <citrusleaf/cf_clock.h>
 
 #include <aerospike/aerospike.h>
-#include <aerospike/aerospike_index.h>
 #include <aerospike/aerospike_info.h>
 #include <aerospike/aerospike_key.h>
-#include <aerospike/aerospike_udf.h>
 #include <aerospike/as_arraylist.h>
 #include <aerospike/as_bin.h>
 #include <aerospike/as_cluster.h>
@@ -86,15 +84,13 @@
 #include <sys/statvfs.h>
 #include <sys/types.h>
 
-#define VERSION_3_0 "3.0"               ///< Indicates a legacy backup file.
-#define VERSION_3_1 "3.1"               ///< Indicates a new-style backup file.
+#define VERSION_1_1 "1.1"               ///< Indicates a new-style backup file.
 
 #define MAX_META_LINE 1000              ///< The maximal length of a meta data line in a backup
                                         ///  file.
 #define META_PREFIX "# "                ///< Every meta data line starts with this prefix.
 #define META_FIRST_FILE "first-file"    ///< The meta data tag that marks the backup file that was
-                                        ///  written first and thus may contain secondary index
-                                        ///  information and UDF files.
+                                        ///  written first FIXME: Remove
 #define META_NAMESPACE "namespace"      ///< The meta data tag that specifies the namespace from
                                         ///  which this backup file was created.
 
@@ -129,29 +125,6 @@ typedef struct {
 	char *path;     ///< The path expression.
 	path_type type; ///< The data type.
 } path_param;
-
-///
-/// The type of a secondary index.
-///
-typedef enum {
-	INDEX_TYPE_INVALID,     ///< Invalid.
-	INDEX_TYPE_NONE,        ///< Original, vanilla secondary index.
-	INDEX_TYPE_LIST,        ///< Index on list elements.
-	INDEX_TYPE_MAPKEYS,     ///< Index on map keys.
-	INDEX_TYPE_MAPVALUES    ///< Index on map values.
-} index_type;
-
-///
-/// Encapsulates secondary index information.
-///
-typedef struct {
-	char *ns;           ///< The namespace of the index.
-	char *set;          ///< The set of the index.
-	char *name;         ///< The index name.
-	index_type type;    ///< The type of the index.
-	as_vector path_vec; ///< The path expressions of the index as a vector of path_param. Currently,
-	                    ///  there's always only one path expression.
-} index_param;
 
 ///
 /// Identifies the TLS client command line options.

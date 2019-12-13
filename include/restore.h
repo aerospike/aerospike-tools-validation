@@ -36,22 +36,10 @@
 #define STAT_INTERVAL 10                ///< The interval for logging per-thread timing stats.
 
 ///
-/// Encapsulates a UDF file.
-///
-typedef struct {
-	as_udf_type type;   ///< The language of the UDF file.
-	char *name;         ///< The name of the UDF file.
-	uint32_t size;      ///< The size of the UDF file.
-	void *data;         ///< The content of the UDF file.
-} udf_param;
-
-///
 /// The result codes for the backup file format decoder.
 ///
 typedef enum {
 	DECODER_RECORD, ///< A record was read and is returned.
-	DECODER_INDEX,  ///< Secondary index information was read and is returned.
-	DECODER_UDF,    ///< A UDF file was read and is returned.
 	DECODER_EOF,    ///< The end of the backup file was encountered.
 	DECODER_ERROR   ///< An error occurred.
 } decoder_status;
@@ -64,7 +52,6 @@ typedef struct {
 	/// Reads, parses, and returns the next entity from a backup file descriptor.
 	///
 	/// @param fd        The file descriptor.
-	/// @param legacy    Indicates a version 3.0 backup file.
 	/// @param ns_vec    The (optional) source and (also optional) target namespace to be restored.
 	/// @param bin_vec   The bins to be restored, as a vector of strings.
 	/// @param line_no   The current line number.
@@ -73,16 +60,11 @@ typedef struct {
 	///                  [DECODER_RECORD](@ref decoder_status::DECODER_RECORD).
 	/// @param expired   Indicates that an expired record was read. Only valid, if the result is
 	///                  [DECODER_RECORD](@ref decoder_status::DECODER_RECORD).
-	/// @param index     The returned secondary index information. Only valid, if the result is
-	///                  [DECODER_INDEX](@ref decoder_status::DECODER_INDEX).
-	/// @param udf       The returned UDF file. Only valid, if the result is
-	///                  [DECODER_UDF](@ref decoder_status::DECODER_UDF).
 	///
 	/// @result          See @ref decoder_status.
 	///
-	decoder_status (*parse)(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec,
-			uint32_t *line_no, cf_atomic64 *total, as_record *rec, bool *expired,
-			index_param *index, udf_param *udf);
+	decoder_status (*parse)(FILE *fd, as_vector *ns_vec, as_vector *bin_vec,
+			uint32_t *line_no, cf_atomic64 *total, as_record *rec, bool *expired);
 } backup_decoder;
 
 ///
@@ -98,8 +80,6 @@ typedef struct {
 	char *password;
 	uint32_t threads;
 	char *nice_list;
-	bool no_records;
-	bool wait;
 	uint32_t timeout;               ///< timeout for Aerospike commands.
 
 	as_config_tls tls;
@@ -148,8 +128,6 @@ typedef struct {
 	volatile uint64_t records_limit;    ///< The current limit for total_records for throttling.
 	                                    ///  This is periodically increased by the counter thread to
 	                                    ///  raise the limit according to the TPS limit.
-	volatile uint32_t index_count;  ///< The number of successfully created secondary indexes.
-	volatile uint32_t udf_count;    ///< The number of successfully stored UDF files.
 	char *auth_mode;                ///< Authentication mode.
 
 	bool cdt_print;
@@ -169,7 +147,6 @@ typedef struct {
 	                        ///  restored, as a vector of strings.
 	as_vector *bin_vec;     ///< The bins to be restored, as a vector of bin name strings.
 	as_vector *set_vec;     ///< The sets to be restored, as a vector of set name strings.
-	bool legacy;            ///< Indicates a version 3.0 backup file.
 } restore_thread_args;
 
 ///
@@ -194,8 +171,6 @@ typedef struct {
 	                            ///  Copied from restore_thread_args.bin_vec.
 	as_vector *set_vec;         ///< The sets to be restored, as a vector of set name strings.
 	                            ///  Copied from restore_thread_args.set_vec.
-	bool legacy;                ///< Indicates a version 3.0 backup file. Copied from
-	                            ///  restore_thread_args.legacy.
 	uint64_t stat_records;      ///< The number of records for which we have collected timing stats.
 	cf_clock read_time;         ///< The time spent on reading records on this thread.
 	cf_clock store_time;        ///< The time spent on storing records on this thread.
@@ -203,13 +178,3 @@ typedef struct {
 	uint32_t store_ema;         ///< The exponential moving average of store latencies.
 } per_thread_context;
 
-///
-/// Indicates, whether a secondary index exists and matches a given secondary index specification.
-///
-typedef enum {
-	INDEX_STATUS_INVALID,   ///< Invalid.
-	INDEX_STATUS_ABSENT,    ///< The secondary index does not exist.
-	INDEX_STATUS_SAME,      ///< The secondary index exists and it matches the given specification.
-	INDEX_STATUS_DIFFERENT  ///< The secondary index exists, but it does not match the given
-	                        ///  specification.
-} index_status;

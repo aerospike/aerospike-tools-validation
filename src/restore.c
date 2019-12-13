@@ -50,7 +50,7 @@ close_file(FILE **fd, void **fd_buf)
 	}
 
 	if (verbose) {
-		ver("Closing backup file");
+		ver("Closing validation file");
 	}
 
 	if (*fd == stdin) {
@@ -66,7 +66,7 @@ close_file(FILE **fd, void **fd_buf)
 		}
 
 		if (fclose(*fd) == EOF) {
-			err_code("Error while closing backup file");
+			err_code("Error while closing validation file");
 			return false;
 		}
 	}
@@ -88,7 +88,6 @@ close_file(FILE **fd, void **fd_buf)
 /// @param ns_vec      The (optional) source and (also optional) target namespace to be restored.
 /// @param fd          The file descriptor of the opened backup file.
 /// @param fd_buf      The I/O buffer allocated for the file descriptor.
-/// @param legacy      Indicates a version 3.0 backup file.
 /// @param line_no     The current line number.
 /// @param first_file  Indicates that the backup file may contain secondary index information and
 ///                    UDF files, i.e., it was the first backup file written during backup.
@@ -99,16 +98,16 @@ close_file(FILE **fd, void **fd_buf)
 /// @result            `true`, if successful.
 ///
 static bool
-open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bool *legacy,
+open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf,
 		uint32_t *line_no, bool *first_file, cf_atomic64 *total, off_t *size)
 {
 	if (verbose) {
-		ver("Opening backup file %s", file_path);
+		ver("Opening validation file %s", file_path);
 	}
 
 	if (strcmp(file_path, "-") == 0 || strncmp(file_path, "-:", 2) == 0) {
 		if (verbose) {
-			ver("Backup file is stdin");
+			ver("Validation file is stdin");
 		}
 
 		if (size != NULL) {
@@ -137,7 +136,7 @@ open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bo
 			struct stat stat_buf;
 
 			if (stat(file_path, &stat_buf) < 0) {
-				err_code("Error while determining backup file size for %s", file_path);
+				err_code("Error while determining validation file size for %s", file_path);
 				return false;
 			}
 
@@ -145,39 +144,37 @@ open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bo
 		}
 
 		if ((*fd = fopen(file_path, "r")) == NULL) {
-			err_code("Error while opening backup file %s", file_path);
+			err_code("Error while opening validation file %s", file_path);
 			return false;
 		}
 
-		inf("Opened backup file %s", file_path);
+		inf("Opened validation file %s", file_path);
 	}
 
 	*fd_buf = safe_malloc(IO_BUF_SIZE);
 	setbuffer(*fd, *fd_buf, IO_BUF_SIZE);
 
 	if (verbose) {
-		ver("Validating backup file version");
+		ver("Validating validation file version");
 	}
 
 	bool res = false;
-	char version[13];
+	char version[24];
 	memset(version, 0, sizeof version);
 
 	if (fgets(version, sizeof version, *fd) == NULL) {
-		err("Error while reading version from backup file %s", file_path);
+		err("Error while reading version from validation file %s", file_path);
 		goto cleanup1;
 	}
 
-	if (strncmp("Version ", version, 8) != 0 || version[11] != '\n' || version[12] != 0) {
-		err("Invalid version line in backup file %s", file_path);
+	if (strncmp("Validation Version ", version, 19) != 0 || version[22] != '\n' || version[23] != 0) {
+		err("Invalid version line in validation file %s", file_path);
 		hex_dump_err(version, sizeof version);
 		goto cleanup1;
 	}
 
-	*legacy = strncmp(version + 8, VERSION_3_0, 3) == 0;
-
-	if (!(*legacy) && strncmp(version + 8, VERSION_3_1, 3) != 0) {
-		err("Invalid backup file version %.3s in backup file %s", version + 8, file_path);
+	if (strncmp(version + 19, VERSION_1_1, 3) != 0) {
+		err("Invalid validation file version %.3s in validation file %s", version + 8, file_path);
 		hex_dump_err(version, sizeof version);
 		goto cleanup1;
 	}
@@ -200,7 +197,7 @@ open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bo
 		}
 
 		if (fgets(meta, sizeof meta, *fd) == NULL) {
-			err("Error while reading meta data from backup file %s:%u [1]", file_path, *line_no);
+			err("Error while reading meta data from validation file %s:%u [1]", file_path, *line_no);
 			goto cleanup1;
 		}
 
@@ -215,13 +212,13 @@ open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bo
 			}
 
 			if (meta[i] == 0) {
-				err("Meta data line %s too long in backup file %s:%u", meta, file_path, *line_no);
+				err("Meta data line %s too long in validation file %s:%u", meta, file_path, *line_no);
 				goto cleanup1;
 			}
 		}
 
 		if (meta[0] != META_PREFIX[1]) {
-			err("Invalid meta data line \"#%s\" in backup file %s:%u [1]", meta, file_path,
+			err("Invalid meta data line \"#%s\" in validation file %s:%u [1]", meta, file_path,
 					*line_no);
 			goto cleanup1;
 		}
@@ -235,19 +232,19 @@ open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bo
 				const char *ns = as_vector_get_ptr(ns_vec, 0);
 
 				if (meta[1 + sizeof META_NAMESPACE - 1] != ' ') {
-					err("Invalid namespace meta data line in backup file %s:%u", file_path,
+					err("Invalid namespace meta data line in validation file %s:%u", file_path,
 							*line_no);
 					goto cleanup1;
 				}
 
 				if (strcmp(meta + 1 + sizeof META_NAMESPACE - 1 + 1, ns) != 0) {
-					err("Invalid namespace %s in backup file %s (expected: %s)",
+					err("Invalid namespace %s in validation file %s (expected: %s)",
 							meta + 1 + sizeof META_NAMESPACE - 1 + 1, file_path, ns);
 					goto cleanup1;
 				}
 			}
 		} else {
-			err("Invalid meta data line \"#%s\" in backup file %s:%u [2]", meta, file_path,
+			err("Invalid meta data line \"#%s\" in validation file %s:%u [2]", meta, file_path,
 					*line_no);
 			goto cleanup1;
 		}
@@ -257,7 +254,7 @@ open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bo
 
 	if (ch == EOF) {
 		if (ferror(*fd) != 0) {
-			err("Error while reading meta data from backup file %s [2]", file_path);
+			err("Error while reading meta data from validation file %s [2]", file_path);
 			goto cleanup1;
 		}
 	} else {
@@ -266,7 +263,7 @@ open_file(const char *file_path, as_vector *ns_vec, FILE **fd, void **fd_buf, bo
 		}
 
 		if (ungetc(ch, *fd) == EOF) {
-			err("Error while reading meta data from backup file %s [3]", file_path);
+			err("Error while reading meta data from validation file %s [3]", file_path);
 			goto cleanup1;
 		}
 
@@ -287,74 +284,6 @@ cleanup1:
 
 cleanup0:
 	return res;
-}
-
-///
-/// Deallocates the fields of a udf_param UDF file record.
-///
-/// @param param  The udf_param to be deallocated.
-///
-static void
-free_udf(udf_param *param)
-{
-	cf_free(param->name);
-	cf_free(param->data);
-}
-
-///
-/// Deallocates a vector of udf_param UDF file records.
-///
-/// @param udf_vec  The vector of udf_param records to be deallocated.
-///
-static void
-free_udfs(as_vector *udf_vec)
-{
-	if (verbose) {
-		ver("Freeing %u UDF file(s)", udf_vec->size);
-	}
-
-	for (uint32_t i = 0; i < udf_vec->size; ++i) {
-		udf_param *param = as_vector_get(udf_vec, i);
-		free_udf(param);
-	}
-}
-
-///
-/// Deallocates the fields of an index_param secondary index information record.
-///
-/// @param param  The index_param to be deallocated.
-///
-static void
-free_index(index_param *param)
-{
-	cf_free(param->ns);
-	cf_free(param->set);
-	cf_free(param->name);
-
-	for (uint32_t i = 0; i < param->path_vec.size; ++i) {
-		path_param *param2 = as_vector_get(&param->path_vec, i);
-		cf_free(param2->path);
-	}
-
-	as_vector_destroy(&param->path_vec);
-}
-
-///
-/// Deallocates a vector of index_param secondary index information records.
-///
-/// @param index_vec  The vector of index_param records to be deallocated.
-///
-static void
-free_indexes(as_vector *index_vec)
-{
-	if (verbose) {
-		ver("Freeing %u index(es)", index_vec->size);
-	}
-
-	for (uint32_t i = 0; i < index_vec->size; ++i) {
-		index_param *param = as_vector_get(index_vec, i);
-		free_index(param);
-	}
 }
 
 ///
@@ -501,7 +430,6 @@ cdt_print_rec(as_record *rec)
 ///     restore_thread_args.shared_fd.
 ///   - If restoring from a directory: opens the backup file given by restore_thread_args.path.
 ///   - Reads the records from the backup file and stores them in the database.
-///   - Secondary indexes and UDF files are not handled here. They are handled on the main thread.
 ///
 /// @param cont  The job queue.
 ///
@@ -511,7 +439,7 @@ static void *
 restore_thread_func(void *cont)
 {
 	if (verbose) {
-		ver("Entering restore thread");
+		ver("Entering correction thread");
 	}
 
 	cf_queue *job_queue = cont;
@@ -520,7 +448,7 @@ restore_thread_func(void *cont)
 	while (true) {
 		if (stop) {
 			if (verbose) {
-				ver("Restore thread detected failure");
+				ver("Correction thread detected failure");
 			}
 
 			break;
@@ -539,7 +467,7 @@ restore_thread_func(void *cont)
 		}
 
 		if (q_res != CF_QUEUE_OK) {
-			err("Error while picking up restore job");
+			err("Error while picking up correciton job");
 			break;
 		}
 
@@ -554,7 +482,6 @@ restore_thread_func(void *cont)
 		ptc.ns_vec = args.ns_vec;
 		ptc.bin_vec = args.bin_vec;
 		ptc.set_vec = args.set_vec;
-		ptc.legacy = args.legacy;
 		ptc.stat_records = 0;
 		ptc.read_time = 0;
 		ptc.store_time = 0;
@@ -572,9 +499,9 @@ restore_thread_func(void *cont)
 		} else {
 			inf("Restoring %s", ptc.path);
 
-			if (!open_file(ptc.path, ptc.ns_vec, &ptc.fd, &ptc.fd_buf, &ptc.legacy, ptc.line_no,
+			if (!open_file(ptc.path, ptc.ns_vec, &ptc.fd, &ptc.fd_buf, ptc.line_no,
 					NULL, &ptc.conf->total_bytes, NULL)) {
-				err("Error while opening backup file");
+				err("Error while opening validation file");
 				break;
 			}
 		}
@@ -622,8 +549,6 @@ restore_thread_func(void *cont)
 		while (true) {
 			as_record rec;
 			bool expired;
-			index_param index;
-			udf_param udf;
 
 			// restoring from a single backup file: allow one thread at a time to read
 			if (ptc.conf->input_file != NULL) {
@@ -642,9 +567,8 @@ restore_thread_func(void *cont)
 			}
 
 			cf_clock read_start = verbose ? cf_getus() : 0;
-			decoder_status res = ptc.conf->decoder->parse(ptc.fd, ptc.legacy, ptc.ns_vec,
-					ptc.bin_vec, ptc.line_no, &ptc.conf->total_bytes, &rec, &expired,
-					&index, &udf);
+			decoder_status res = ptc.conf->decoder->parse(ptc.fd, ptc.ns_vec,
+					ptc.bin_vec, ptc.line_no, &ptc.conf->total_bytes, &rec, &expired);
 			cf_clock read_time = verbose ? cf_getus() - read_start : 0;
 
 			// set the stop flag inside the critical section; see check above
@@ -658,33 +582,15 @@ restore_thread_func(void *cont)
 
 			if (res == DECODER_EOF) {
 				if (verbose) {
-					ver("End of backup file reached");
+					ver("End of validation file reached");
 				}
 
 				break;
 			}
 
 			if (res == DECODER_ERROR) {
-				err("Error while restoring backup file %s (line %u)", ptc.path, *ptc.line_no);
+				err("Error while restoring validation file %s (line %u)", ptc.path, *ptc.line_no);
 				break;
-			}
-
-			if (res == DECODER_INDEX) {
-				if (verbose) {
-					ver("Ignoring index block");
-				}
-
-				free_index(&index);
-				continue;
-			}
-
-			if (res == DECODER_UDF) {
-				if (verbose) {
-					ver("Ignoring UDF file block");
-				}
-
-				free_udf(&udf);
-				continue;
 			}
 
 			if (res == DECODER_RECORD) {
@@ -829,7 +735,7 @@ restore_thread_func(void *cont)
 			ptc.fd = NULL;
 		// restoring from a directory: close the backup file
 		} else if (!close_file(&ptc.fd, &ptc.fd_buf)) {
-			err("Error while closing backup file");
+			err("Error while closing validation file");
 			break;
 		}
 	}
@@ -843,7 +749,7 @@ restore_thread_func(void *cont)
 	}
 
 	if (verbose) {
-		ver("Leaving restore thread");
+		ver("Leaving correction thread");
 	}
 
 	return res;
@@ -902,14 +808,12 @@ counter_thread_func(void *cont)
 		uint64_t existed_records = cf_atomic64_get(conf->existed_records);
 		uint64_t fresher_records = cf_atomic64_get(conf->fresher_records);
 		uint64_t backoff_count = cf_atomic64_get(conf->backoff_count);
-		uint32_t index_count = conf->index_count;
-		uint32_t udf_count = conf->udf_count;
 
 		if (last_iter || iter++ % 10 == 0) {
-			inf("%u UDF file(s), %u secondary index(es), %" PRIu64 " record(s) "
+			inf("%" PRIu64 " record(s) "
 					"(%" PRIu64 " KiB/s, %" PRIu64 " rec/s, %" PRIu64 " B/rec, backed off: "
 					"%" PRIu64 ")",
-					udf_count, index_count, now_records,
+					now_records,
 					ms == 0 ? 0 : bytes * 1000 / 1024 / ms, ms == 0 ? 0 : records * 1000 / ms,
 					records == 0 ? 0 : bytes / records, backoff_count);
 			inf("Expired %" PRIu64 " : skipped %" PRIu64 " : err_ignored %" PRIu64 " "
@@ -951,9 +855,9 @@ counter_thread_func(void *cont)
 
 		if (last_iter) {
 			if (args->mach_fd != NULL && (fprintf(args->mach_fd,
-					"SUMMARY:%u:%u:%" PRIu64 ":%" PRIu64 ":%" PRIu64 ":%" PRIu64 " "
-					":%" PRIu64 ":%" PRIu64 ":%" PRIu64 "\n", udf_count,
-					index_count, now_records, expired_records, skipped_records,
+					"SUMMARY:%" PRIu64 ":%" PRIu64 ":%" PRIu64 ":%" PRIu64 " "
+					":%" PRIu64 ":%" PRIu64 ":%" PRIu64 "\n",
+					now_records, expired_records, skipped_records,
 					ignored_records, inserted_records, existed_records,
 					fresher_records) < 0 ||
 					fflush(args->mach_fd) == EOF)) {
@@ -985,7 +889,7 @@ get_backup_files(const char *dir_path, as_vector *file_vec)
 	bool res = false;
 
 	if (verbose) {
-		ver("Listing backup files in %s", dir_path);
+		ver("Listing validation files in %s", dir_path);
 	}
 
 	DIR *dir = opendir(dir_path);
@@ -1019,7 +923,7 @@ get_backup_files(const char *dir_path, as_vector *file_vec)
 		}
 	}
 
-	inf("Found %u backup file(s) in %s", file_vec->size, dir_path);
+	inf("Found %u validation file(s) in %s", file_vec->size, dir_path);
 	res = true;
 	goto cleanup1;
 
@@ -1091,7 +995,7 @@ static void
 sig_hand(int32_t sig)
 {
 	(void)sig;
-	err("### Restore interrupted ###");
+	err("### Correction interrupted ###");
 	stop = true;
 }
 
@@ -1101,7 +1005,7 @@ sig_hand(int32_t sig)
 static void
 print_version(void)
 {
-	fprintf(stdout, "Aerospike Restore Utility\n");
+	fprintf(stdout, "Aerospike Correction Utility\n");
 	fprintf(stdout, "Version %s\n", TOOL_VERSION);
 	fprintf(stdout, "C Client Version %s\n", aerospike_client_version);
 	fprintf(stdout, "Copyright 2015-2017 Aerospike. All rights reserved.\n");
@@ -1118,7 +1022,7 @@ usage(const char *name)
 	fprintf(stderr, "Usage: %s [OPTIONS]\n", name);
 	fprintf(stderr, "------------------------------------------------------------------------------");
 	fprintf(stderr, "\n");
-	fprintf(stderr, " -V, --version        Print ASRESTORE version information.\n");
+	fprintf(stderr, " -V, --version        Print ASCORRECTION version information.\n");
 	fprintf(stderr, " -O, --options        Print command-line options message.\n");
 	fprintf(stderr, " -Z, --usage          Display this message.\n\n");
 	fprintf(stderr, " -v, --verbose        Enable verbose output. Default: disabled\n");
@@ -1163,7 +1067,7 @@ usage(const char *name)
 	fprintf(stderr, "                      Set the TLS protocol selection criteria. This format\n"
                     "                      is the same as Apache's SSLProtocol documented at http\n"
                     "                      s://httpd.apache.org/docs/current/mod/mod_ssl.html#ssl\n"
-                    "                      protocol . If not specified the asrestore will use '-all\n"
+                    "                      protocol . If not specified the ascorrection will use '-all\n"
                     "                      +TLSv1.2' if has support for TLSv1.2,otherwise it will\n"
                     "                      be '-all +TLSv1'.\n");
 	fprintf(stderr, " --tls-cipher-suite=TLS_CIPHER_SUITE\n");
@@ -1204,30 +1108,30 @@ usage(const char *name)
                     "                      tls_capath.\n");
 
 
-	fprintf(stderr, "[asrestore]\n");
+	fprintf(stderr, "[ascorrection]\n");
 	fprintf(stderr, "  -n, --namespace <namespace>\n");
 	fprintf(stderr, "                      The namespace to be backed up. Required.\n");
 	fprintf(stderr, "  -d, --directory <directory>\n");
-	fprintf(stderr, "                      The directory that holds the backup files. Required, \n");
+	fprintf(stderr, "                      The directory that holds the validation files. Required, \n");
 	fprintf(stderr, "                      unless -i is used.\n");
 	fprintf(stderr, "  -i, --input-file <file>\n");
-	fprintf(stderr, "                      Restore from a single backup file. Use - for stdin.\n");
+	fprintf(stderr, "                      Correct from a single validation file. Use - for stdin.\n");
 	fprintf(stderr, "                      Required, unless -d is used.\n");
 	fprintf(stderr, "  -t, --threads\n");
-	fprintf(stderr, "                      The number of restore threads. Default: 20.\n");
+	fprintf(stderr, "                      The number of correction threads. Default: 20.\n");
 	fprintf(stderr, "  -m, --machine <path>\n");
 	fprintf(stderr, "                      Output machine-readable status updates to the given path, \n");
 	fprintf(stderr,"                       typically a FIFO.\n");
 	fprintf(stderr, "  -B, --bin-list <bin 1>[,<bin 2>[,...]]\n");
-	fprintf(stderr, "                      Only restore the given bins in the backup.\n");
-	fprintf(stderr, "                      Default: restore all bins.\n");
+	fprintf(stderr, "                      Only correct the given bins in the validation.\n");
+	fprintf(stderr, "                      Default: correct all bins.\n");
 
 	fprintf(stderr, "  -s, --set-list <set 1>[,<set 2>[,...]]\n");
-	fprintf(stderr, "                      Only restore the given sets from the backup.\n");
-	fprintf(stderr, "                      Default: restore all sets.\n");
+	fprintf(stderr, "                      Only correct the given sets from the validation.\n");
+	fprintf(stderr, "                      Default: correct all sets.\n");
 	fprintf(stderr, "  --ignore-record-error\n");
 	fprintf(stderr, "                      Ignore permanent record specific error. e.g AEROSPIKE_RECORD_TOO_BIG.\n");
-	fprintf(stderr, "                      By default such errors are not ignored and asrestore terminates.\n");
+	fprintf(stderr, "                      By default such errors are not ignored and ascorrection terminates.\n");
 	fprintf(stderr, "                      Optional: Use verbose mode to see errors in detail. \n");
 	fprintf(stderr, "  -u, --unique\n");
 	fprintf(stderr, "                      Skip records that already exist in the namespace;\n");
@@ -1241,31 +1145,19 @@ usage(const char *name)
 	fprintf(stderr, "  -N, --nice <bandwidth>,<TPS>\n");
 	fprintf(stderr, "                      The limits for read storage bandwidth in MiB/s and \n");
 	fprintf(stderr, "                      write operations in TPS.\n");
-	fprintf(stderr, "  -R, --no-records\n");
-	fprintf(stderr, "                      Don't restore any records.\n");
-	fprintf(stderr, "  -I, --no-indexes\n");
-	fprintf(stderr, "                      Don't restore any secondary indexes.\n");
-	fprintf(stderr, "  -L, --indexes-last\n");
-	fprintf(stderr, "                      Restore secondary indexes only after UDFs and records \n");
-	fprintf(stderr, "                      have been restored.\n");
-	fprintf(stderr, "  -F, --no-udfs\n");
-	fprintf(stderr, "                      Don't restore any UDFs.\n");
-	fprintf(stderr, "  -w, --wait\n");
-	fprintf(stderr, "                      Wait for restored secondary indexes to finish building.\n");
-	fprintf(stderr, "                      Wait for restored UDFs to be distributed across the cluster.\n");
 	fprintf(stderr, " -T TIMEOUT, --timeout=TIMEOUT\n");
 	fprintf(stderr, "                      Set the timeout (ms) for commands. Default: 10000\n");
 
 	fprintf(stderr, "\n\n");
 	fprintf(stderr, "Default configuration files are read from the following files in the given order:\n");
 	fprintf(stderr, "/etc/aerospike/astools.conf ~/.aerospike/astools.conf\n");
-	fprintf(stderr, "The following sections are read: (cluster asrestore include)\n");
+	fprintf(stderr, "The following sections are read: (cluster ascorrection include)\n");
 	fprintf(stderr, "The following options effect configuration file behavior\n");
 	fprintf(stderr, " --no-config-file \n");
 	fprintf(stderr, "                      Do not read any config file. Default: disabled\n");
 	fprintf(stderr, " --instance <name>\n");
 	fprintf(stderr, "                      Section with these instance is read. e.g in case instance `a` is specified\n");
-	fprintf(stderr, "                      sections cluster_a, asrestore_a is read.\n");
+	fprintf(stderr, "                      sections cluster_a, ascorrection_a is read.\n");
 	fprintf(stderr, " --config-file <path>\n");
 	fprintf(stderr, "                      Read this file after default configuration file.\n");
 	fprintf(stderr, " --only-config-file <path>\n");
@@ -1338,11 +1230,6 @@ main(int32_t argc, char **argv)
 		{ "replace", no_argument, NULL, 'r' },
 		{ "no-generation", no_argument, NULL, 'g' },
 		{ "nice", required_argument, NULL, 'N' },
-		{ "no-records", no_argument, NULL, 'R' },
-		{ "no-indexes", no_argument, NULL, 'I' },
-		{ "indexes-last", no_argument, NULL, 'L' },
-		{ "no-udfs", no_argument, NULL, 'F' },
-		{ "wait", no_argument, NULL, 'w' },
 		{ "services-alternate", no_argument, NULL, 'S' },
 		{ "timeout", required_argument, 0, 'T' },
 		{ NULL, 0, NULL, 0 }
@@ -1531,14 +1418,6 @@ main(int32_t argc, char **argv)
 			conf.nice_list = safe_strdup(optarg);
 			break;
 
-		case 'R':
-			conf.no_records = true;
-			break;
-
-		case 'w':
-			conf.wait = true;
-			break;
-
 		case 'S':
 			conf.use_services_alternate = true;
 			break;
@@ -1651,7 +1530,7 @@ main(int32_t argc, char **argv)
 	signal(SIGINT, sig_hand);
 	signal(SIGTERM, sig_hand);
 
-	inf("Starting restore to %s (bins: %s, sets: %s) from %s", conf.host,
+	inf("Starting correction to %s (bins: %s, sets: %s) from %s", conf.host,
 			conf.bin_list == NULL ? "[all]" : conf.bin_list,
 			conf.set_list == NULL ? "[all]" : conf.set_list,
 			conf.input_file != NULL ?
@@ -1735,8 +1614,6 @@ main(int32_t argc, char **argv)
 	cf_atomic64_set(&conf.existed_records, 0);
 	cf_atomic64_set(&conf.fresher_records, 0);
 	cf_atomic64_set(&conf.backoff_count, 0);
-	conf.index_count = 0;
-	conf.udf_count = 0;
 
 	pthread_t counter_thread;
 	counter_thread_args counter_args;
@@ -1760,7 +1637,6 @@ main(int32_t argc, char **argv)
 	restore_args.path = NULL;
 	restore_args.shared_fd = NULL;
 	restore_args.line_no = NULL;
-	restore_args.legacy = false;
 	cf_queue *job_queue = cf_queue_create(sizeof (restore_thread_args), true);
 
 	if (job_queue == NULL) {
@@ -1770,10 +1646,8 @@ main(int32_t argc, char **argv)
 
 	uint32_t line_no;
 	void *fd_buf = NULL;
-	as_vector file_vec, index_vec, udf_vec, ns_vec, nice_vec, bin_vec, set_vec;
+	as_vector file_vec, ns_vec, nice_vec, bin_vec, set_vec;
 	as_vector_inita(&file_vec, sizeof (void *), 25)
-	as_vector_inita(&index_vec, sizeof (index_param), 25);
-	as_vector_inita(&udf_vec, sizeof (udf_param), 25);
 	as_vector_inita(&ns_vec, sizeof (void *), 25);
 	as_vector_inita(&nice_vec, sizeof (void *), 25);
 	as_vector_inita(&bin_vec, sizeof (void *), 25);
@@ -1840,12 +1714,12 @@ main(int32_t argc, char **argv)
 	// restoring from a directory
 	if (conf.directory != NULL) {
 		if (!get_backup_files(conf.directory, &file_vec)) {
-			err("Error while getting backup files");
+			err("Error while getting validation files");
 			goto cleanup6;
 		}
 
 		if (file_vec.size == 0) {
-			err("No backup files found");
+			err("No validation files found");
 			goto cleanup6;
 		}
 
@@ -1858,7 +1732,7 @@ main(int32_t argc, char **argv)
 			restore_args.path = as_vector_get_ptr(&file_vec, i);
 
 			if (cf_queue_push(job_queue, &restore_args) != CF_QUEUE_OK) {
-				err("Error while queueing restore job");
+				err("Error while queueing correction job");
 				goto cleanup8;
 			}
 		}
@@ -1872,9 +1746,8 @@ main(int32_t argc, char **argv)
 
 		// open the file, file descriptor goes to restore_args.shared_fd
 		if (!open_file(conf.input_file, restore_args.ns_vec, &restore_args.shared_fd, &fd_buf,
-				&restore_args.legacy, &line_no, NULL, &conf.total_bytes,
-				conf.no_records ? NULL : &conf.estimated_bytes)) {
-			err("Error while opening shared backup file");
+				&line_no, NULL, &conf.total_bytes, &conf.estimated_bytes)) {
+			err("Error while opening shared validation file");
 			goto cleanup6;
 		}
 
@@ -1888,27 +1761,22 @@ main(int32_t argc, char **argv)
 		// push an identical job for each thread; all threads use restore_args.shared_fd for reading
 		for (uint32_t i = 0; i < conf.threads; ++i) {
 			if (cf_queue_push(job_queue, &restore_args) != CF_QUEUE_OK) {
-				err("Error while queueing restore job");
+				err("Error while queueing correction job");
 				goto cleanup8;
 			}
 		}
-	}
-
-	if (conf.no_records) {
-		res = EXIT_SUCCESS;
-		goto cleanup9;
 	}
 
 	inf("Restoring records");
 	uint32_t threads_ok = 0;
 
 	if (verbose) {
-		ver("Creating %u restore thread(s)", conf.threads);
+		ver("Creating %u correction thread(s)", conf.threads);
 	}
 
 	for (uint32_t i = 0; i < conf.threads; ++i) {
 		if (pthread_create(&restore_threads[i], NULL, restore_thread_func, job_queue) != 0) {
-			err_code("Error while creating restore thread");
+			err_code("Error while creating correction thread");
 			goto cleanup10;
 		}
 
@@ -1919,38 +1787,34 @@ main(int32_t argc, char **argv)
 
 cleanup10:
 	if (verbose) {
-		ver("Waiting for %u restore thread(s)", threads_ok);
+		ver("Waiting for %u correction thread(s)", threads_ok);
 	}
 
 	void *thread_res;
 
 	for (uint32_t i = 0; i < threads_ok; i++) {
 		if (pthread_join(restore_threads[i], &thread_res) != 0) {
-			err_code("Error while joining restore thread");
+			err_code("Error while joining correction thread");
 			stop = true;
 			res = EXIT_FAILURE;
 		}
 
 		if (thread_res != (void *)EXIT_SUCCESS) {
 			if (verbose) {
-				ver("Restore thread failed");
+				ver("Correction thread failed");
 			}
 
 			res = EXIT_FAILURE;
 		}
 	}
 
-cleanup9:
 cleanup8:
-	free_indexes(&index_vec);
-	free_udfs(&udf_vec);
-
 	if (conf.directory != NULL) {
 		for (uint32_t i = 0; i < file_vec.size; ++i) {
 			cf_free(as_vector_get_ptr(&file_vec, i));
 		}
 	} else if (!close_file(&restore_args.shared_fd, &fd_buf)) {
-		err("Error while closing shared backup file");
+		err("Error while closing shared validation file");
 		res = EXIT_FAILURE;
 	}
 
@@ -1959,8 +1823,6 @@ cleanup6:
 	as_vector_destroy(&bin_vec);
 	as_vector_destroy(&nice_vec);
 	as_vector_destroy(&ns_vec);
-	as_vector_destroy(&udf_vec);
-	as_vector_destroy(&index_vec);
 	as_vector_destroy(&file_vec);
 	cf_queue_destroy(job_queue);
 
@@ -2063,8 +1925,6 @@ config_default(restore_config *conf)
 
 	conf->threads = DEFAULT_THREADS;
 	conf->nice_list = NULL;
-	conf->no_records = false;
-	conf->wait = false;
 	conf->ns_list = NULL;
 	conf->directory = NULL;
 	conf->input_file = NULL;

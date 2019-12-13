@@ -23,7 +23,6 @@ SET = u"test"
 CLIENT_ATTEMPTS = 20
 WORK_DIRECTORY = "work"
 STATE_DIRECTORIES = ["state-1", "state-2"]
-UDF_DIRECTORIES = ["udf-1", "udf-2"]
 FAKE_TIME_FILE = "clock_gettime.txt"
 SHOW_ASD_OUTPUT = False
 USE_VALGRIND = True
@@ -137,12 +136,6 @@ def remove_state_dirs():
 		if os.path.exists(state):
 			remove_dir(state)
 
-	for walker in UDF_DIRECTORIES:
-		udf = absolute_path(WORK_DIRECTORY, walker)
-
-		if os.path.exists(udf):
-			remove_dir(udf)
-
 def init_work_dir():
 	"""
 	Creates an empty work directory.
@@ -164,10 +157,6 @@ def init_state_dirs():
 		os.mkdir(state, 0755)
 		smd = absolute_path(os.path.join(WORK_DIRECTORY, walker, "smd"))
 		os.mkdir(smd, 0755)
-
-	for walker in UDF_DIRECTORIES:
-		udf = absolute_path(os.path.join(WORK_DIRECTORY, walker))
-		os.mkdir(udf, 0755)
 
 def write_file(path, content):
 	"""
@@ -256,7 +245,6 @@ def create_conf_file(temp_file, base, peer_base, index):
 
 	params = {
 		"state_directory": "work/state-" + str(index),
-		"udf_directory": "work/udf-" + str(index),
 		"service_port": str(base),
 		"fabric_port": str(base + 1),
 		"heartbeat_port": str(base + 2),
@@ -506,162 +494,6 @@ def geo_to_string(value):
 
 	return value
 
-def put_udf_file(content):
-	"""
-	Stores a UDF file with the given name and content on the cluster.
-	"""
-	path = temporary_path("lua")
-	write_file(path, content)
-	validate_client()
-	assert GLOBALS["client"].udf_put(path, aerospike.UDF_TYPE_LUA) == 0, \
-			"Unexpected error while storing UDF file"
-	return path
-
-def get_udf_file(file_name):
-	"""
-	Retrieves the UDF file with the given name from the cluster.
-	"""
-	validate_client()
-	return GLOBALS["client"].udf_get(file_name, aerospike.UDF_TYPE_LUA)
-
-def validate_index_check(set_name, path, value):
-	"""
-	Validates the string parameters for the index query functions.
-	"""
-	force_unicode(set_name, "Please use Unicode set names")
-	force_unicode(path, "Please use Unicode index paths")
-	force_unicode(value, "Please use Unicode query values")
-
-def check_simple_index(set_name, path, value):
-	"""
-	Tests the presence of a simple secondary index by making an "equals" query.
-	"""
-	validate_index_check(set_name, path, value)
-	query = GLOBALS["client"].query(NAMESPACE, set_name)
-	query.where(aerospike.predicates.equals(path, value))
-	query.results()
-
-def check_geo_index(set_name, path, value):
-	"""
-	Tests the presence of a geo index by making a region query.
-	"""
-	validate_index_check(set_name, path, value)
-	query = GLOBALS["client"].query(NAMESPACE, set_name)
-	# XXX - geo index requires string bin names
-	query.where(aerospike.predicates.geo_within_radius(str(path), value[0], value[1], 10.0))
-	query.results()
-
-def check_complex_index(set_name, path, index_type, value):
-	"""
-	Tests the presence of a complex secondary index by making a "contains" query.
-	"""
-	validate_index_check(set_name, path, value)
-	query = GLOBALS["client"].query(NAMESPACE, set_name)
-	query.where(aerospike.predicates.contains(path, index_type, value))
-	query.results()
-
-def check_list_index(set_name, path, value):
-	"""
-	Test presence of a complex list secondary index by making a
-	"contains" query.
-	"""
-	check_complex_index(set_name, path, aerospike.INDEX_TYPE_LIST, value)
-
-def check_map_key_index(set_name, path, value):
-	"""
-	Test presence of a complex map key secondary index by making a
-	"contains" query.
-	"""
-	check_complex_index(set_name, path, aerospike.INDEX_TYPE_MAPKEYS, value)
-
-def check_map_value_index(set_name, path, value):
-	"""
-	Test presence of a complex map value secondary index by making a
-	"contains" query.
-	"""
-	check_complex_index(set_name, path, aerospike.INDEX_TYPE_MAPVALUES, value)
-
-def validate_index_creation(set_name, path, index_name):
-	"""
-	Validates the string parameters for the index creation functions.
-	"""
-	force_unicode(set_name, "Please use Unicode set names")
-	force_unicode(path, "Please use Unicode index paths")
-	force_unicode(index_name, "Please use Unicode index names")
-
-def create_integer_index(set_name, path, index_name):
-	"""
-	Creates an integer index.
-	"""
-	validate_index_creation(set_name, path, index_name)
-	assert GLOBALS["client"].index_integer_create(NAMESPACE, set_name, path, index_name) == 0, \
-			"Unexpected error while creating index"
-
-def create_integer_list_index(set_name, path, index_name):
-	"""
-	Creates an integer list index.
-	"""
-	validate_index_creation(set_name, path, index_name)
-	assert GLOBALS["client"].index_list_create(NAMESPACE, set_name, path, aerospike.INDEX_NUMERIC, \
-			index_name) == 0, "Unexpected error while creating index"
-
-def create_integer_map_key_index(set_name, path, index_name):
-	"""
-	Creates an integer map key index.
-	"""
-	validate_index_creation(set_name, path, index_name)
-	assert GLOBALS["client"].index_map_keys_create(NAMESPACE, set_name, path, \
-			aerospike.INDEX_NUMERIC, index_name) == 0, "Unexpected error while creating index"
-
-def create_integer_map_value_index(set_name, path, index_name):
-	"""
-	Creates an integer map value index.
-	"""
-	validate_index_creation(set_name, path, index_name)
-	assert GLOBALS["client"].index_map_values_create(NAMESPACE, set_name, path, \
-			aerospike.INDEX_NUMERIC, index_name) == 0, "Unexpected error while creating index"
-
-def create_string_index(set_name, path, index_name):
-	"""
-	Creates a string index.
-	"""
-	validate_index_creation(set_name, path, index_name)
-	assert GLOBALS["client"].index_string_create(NAMESPACE, set_name, path, index_name) == 0, \
-			"Unexpected error while creating index"
-
-def create_geo_index(set_name, path, index_name):
-	"""
-	Creates a geo index.
-	"""
-	validate_index_creation(set_name, path, index_name)
-	# XXX - geo index requires string bin names
-	assert GLOBALS["client"].index_geo2dsphere_create(NAMESPACE, set_name, str(path), \
-			index_name) == 0, "Unexpected error while creating index"
-
-def create_string_list_index(set_name, path, index_name):
-	"""
-	Creates a string list index.
-	"""
-	validate_index_creation(set_name, path, index_name)
-	assert GLOBALS["client"].index_list_create(NAMESPACE, set_name, path, aerospike.INDEX_STRING, \
-			index_name) == 0, "Unexpected error while creating index"
-
-def create_string_map_key_index(set_name, path, index_name):
-	"""
-	Creates a string map key index.
-	"""
-	validate_index_creation(set_name, path, index_name)
-	assert GLOBALS["client"].index_map_keys_create(NAMESPACE, set_name, path, \
-			aerospike.INDEX_STRING, index_name) == 0, "Unexpected error while creating index"
-
-def create_string_map_value_index(set_name, path, index_name):
-	"""
-	Creates a string map value index.
-	"""
-	validate_index_creation(set_name, path, index_name)
-	assert GLOBALS["client"].index_map_values_create(NAMESPACE, set_name, path, \
-			aerospike.INDEX_STRING, index_name) == 0, "Unexpected error while creating index"
-
 def backup_to_file(path, *options):
 	"""
 	Backup to the given file using the default options plus the given options.
@@ -861,22 +693,6 @@ def identifier_variations(max_len, allow_nul=True):
 		variations.append(identifier_with_line_feed(max_len / 2, char_type))
 		variations.append(identifier_with_line_feed(max_len, char_type))
 
-	return variations
-
-def index_variations(max_len):
-	"""
-	Generates a whole bunch of identifiers that are suitable for index commands.
-	"""
-	variations = []
-	variations.append(u" ")
-	variations.append(u"  ")
-	variations.append(identifier(1, CHAR_TYPE_ALPHAMERIC))
-	variations.append(identifier(max_len / 2, CHAR_TYPE_ALPHAMERIC))
-	variations.append(identifier(max_len, CHAR_TYPE_ALPHAMERIC))
-	variations.append(space_framed_identifier(max_len / 2, CHAR_TYPE_ALPHAMERIC))
-	variations.append(space_framed_identifier(max_len, CHAR_TYPE_ALPHAMERIC))
-	variations.append(identifier_with_space(max_len / 2, CHAR_TYPE_ALPHAMERIC))
-	variations.append(identifier_with_space(max_len, CHAR_TYPE_ALPHAMERIC))
 	return variations
 
 if __name__ == "__main__":
