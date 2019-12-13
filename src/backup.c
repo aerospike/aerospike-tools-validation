@@ -79,11 +79,11 @@ close_file(FILE **fd, void **fd_buf)
 	}
 
 	if (verbose) {
-		ver("Closing backup file");
+		ver("Closing validation file");
 	}
 
 	if (fflush(*fd) == EOF) {
-		err_code("Error while flushing backup file");
+		err_code("Error while flushing validation file");
 		return false;
 	}
 
@@ -112,7 +112,7 @@ close_file(FILE **fd, void **fd_buf)
 		}
 
 		if (fclose(*fd) == EOF) {
-			err_code("Error while closing backup file");
+			err_code("Error while closing validation file");
 			return false;
 		}
 	}
@@ -145,25 +145,25 @@ open_file(uint64_t *bytes, const char *file_path, const char *ns,
 		uint64_t disk_space, FILE **fd, void **fd_buf)
 {
 	if (verbose) {
-		ver("Opening backup file %s", file_path);
+		ver("Opening validation file %s", file_path);
 	}
 
 	if (strcmp(file_path, "-") == 0) {
 		if (verbose) {
-			ver("Backup file is stdout");
+			ver("Validation file is stdout");
 		}
 
 		*fd = stdout;
 	} else {
 		if (verbose) {
-			ver("Creating backup file");
+			ver("Creating validation file");
 		}
 
 		int32_t res = remove(file_path);
 
 		if (res < 0) {
 			if (errno != ENOENT) {
-				err_code("Error while removing existing backup file %s", file_path);
+				err_code("Error while removing existing validation file %s", file_path);
 				return false;
 			}
 		}
@@ -174,28 +174,28 @@ open_file(uint64_t *bytes, const char *file_path, const char *ns,
 		cf_free(tmp_path);
 
 		if ((*fd = fopen(file_path, "w")) == NULL) {
-			err_code("Error while creating backup file %s", file_path);
+			err_code("Error while creating validation file %s", file_path);
 			return false;
 		}
 
-		inf("Created new backup file %s", file_path);
+		inf("Created new validation file %s", file_path);
 	}
 
 	if (verbose) {
-		ver("Initializing backup file");
+		ver("Initializing validation file");
 	}
 
 	*fd_buf = safe_malloc(IO_BUF_SIZE);
 	setbuffer(*fd, *fd_buf, IO_BUF_SIZE);
 
 	if (fprintf_bytes(bytes, *fd, "Version " VERSION_3_1 "\n") < 0) {
-		err_code("Error while writing header to backup file %s", file_path);
+		err_code("Error while writing header to validation file %s", file_path);
 		close_file(fd, fd_buf);
 		return false;
 	}
 
 	if (fprintf_bytes(bytes, *fd, META_PREFIX META_NAMESPACE " %s\n", escape(ns)) < 0) {
-		err_code("Error while writing meta data to backup file %s", file_path);
+		err_code("Error while writing meta data to validation file %s", file_path);
 		close_file(fd, fd_buf);
 		return false;
 	}
@@ -243,7 +243,7 @@ open_dir_file(per_node_context *pnc)
 
 	if ((size_t)snprintf(file_path, sizeof file_path, "%s/%s_%05d.asb", pnc->conf->directory,
 			pnc->node_name, pnc->file_count) >= sizeof file_path) {
-		err("Backup file path too long");
+		err("Validation file path too long");
 		return false;
 	}
 
@@ -722,16 +722,16 @@ scan_callback(const as_val *val, void *cont)
 	// backing up to a directory: switch backup files when reaching the file size limit
 	if (pnc->conf->directory != NULL && pnc->byte_count_file >= pnc->conf->file_limit) {
 		if (verbose) {
-			ver("Crossed %" PRIu64 " bytes, switching backup file", pnc->conf->file_limit);
+			ver("Crossed %" PRIu64 " bytes, switching validation file", pnc->conf->file_limit);
 		}
 
 		if (!close_dir_file(pnc)) {
-			err("Error while closing old backup file");
+			err("Error while closing old validation file");
 			return false;
 		}
 
 		if (!open_dir_file(pnc)) {
-			err("Error while opening new backup file");
+			err("Error while opening new validation file");
 			return false;
 		}
 	}
@@ -749,7 +749,7 @@ scan_callback(const as_val *val, void *cont)
 	}
 
 	if (!ok) {
-		err("Error while storing record in backup file");
+		err("Error while storing record in validation file");
 		return false;
 	}
 
@@ -794,7 +794,7 @@ static void *
 backup_thread_func(void *cont)
 {
 	if (verbose) {
-		ver("Entering backup thread 0x%" PRIx64, (uint64_t)pthread_self());
+		ver("Entering validation thread 0x%" PRIx64, (uint64_t)pthread_self());
 	}
 
 	cf_queue *job_queue = cont;
@@ -803,7 +803,7 @@ backup_thread_func(void *cont)
 	while (true) {
 		if (stop) {
 			if (verbose) {
-				ver("Backup thread detected failure");
+				ver("Validation thread detected failure");
 			}
 
 			break;
@@ -822,7 +822,7 @@ backup_thread_func(void *cont)
 		}
 
 		if (q_res != CF_QUEUE_OK) {
-			err("Error while picking up backup job");
+			err("Error while picking up validation job");
 			break;
 		}
 
@@ -836,7 +836,7 @@ backup_thread_func(void *cont)
 		pnc.file_count = 0;
 		pnc.rec_count_node = pnc.byte_count_node = 0;
 
-		inf("Starting backup for node %s", pnc.node_name);
+		inf("Starting validation for node %s", pnc.node_name);
 
 		// backing up to a single backup file: use the provided shared file descriptor for
 		// the current job
@@ -848,7 +848,7 @@ backup_thread_func(void *cont)
 			pnc.fd = pnc.shared_fd;
 		// backing up to a directory: create the first backup file for the current job
 		} else if (pnc.conf->directory != NULL && !open_dir_file(&pnc)) {
-			err("Error while opening first backup file");
+			err("Error while opening first validation file");
 			break;
 		}
 
@@ -867,7 +867,7 @@ backup_thread_func(void *cont)
 			goto close_file;
 		}
 
-		inf("Completed backup for node %s, records: %" PRIu64 ", size: %" PRIu64 " "
+		inf("Completed validation for node %s, records: %" PRIu64 ", size: %" PRIu64 " "
 				"(~%" PRIu64 " B/rec)", pnc.node_name, pnc.rec_count_node,
 				pnc.byte_count_node,
 				pnc.rec_count_node == 0 ? 0 : pnc.byte_count_node / pnc.rec_count_node);
@@ -882,7 +882,7 @@ backup_thread_func(void *cont)
 			pnc.fd = NULL;
 		// backing up to a directory: close the last backup file for the current job
 		} else if (pnc.conf->directory != NULL && !close_dir_file(&pnc)) {
-			err("Error while closing backup file");
+			err("Error while closing validation file");
 			break;
 		}
 	}
@@ -896,7 +896,7 @@ backup_thread_func(void *cont)
 	}
 
 	if (verbose) {
-		ver("Leaving backup thread");
+		ver("Leaving validation thread");
 	}
 
 	return res;
@@ -1099,7 +1099,7 @@ static bool
 clean_directory(const char *dir_path, bool clear)
 {
 	if (verbose) {
-		ver("Preparing backup directory %s", dir_path);
+		ver("Preparing validation directory %s", dir_path);
 	}
 
 	DIR *dir = opendir(dir_path);
@@ -1130,7 +1130,7 @@ clean_directory(const char *dir_path, bool clear)
 	while ((entry = readdir(dir)) != NULL) {
 		if (strcmp(entry->d_name + strlen(entry->d_name) - 4, ".asb") == 0) {
 			if (!clear) {
-				err("Directory %s seems to contain an existing backup; "
+				err("Directory %s seems to contain an existing validation; "
 						"use -r to clear directory", dir_path);
 				closedir(dir);
 				return false;
@@ -1146,7 +1146,7 @@ clean_directory(const char *dir_path, bool clear)
 			}
 
 			if (remove(file_path) < 0) {
-				err_code("Error while removing existing backup file %s", file_path);
+				err_code("Error while removing existing validation file %s", file_path);
 				closedir(dir);
 				return false;
 			}
@@ -1158,7 +1158,7 @@ clean_directory(const char *dir_path, bool clear)
 		return false;
 	}
 
-	inf("Directory %s prepared for backup", dir_path);
+	inf("Directory %s prepared for validation", dir_path);
 	return true;
 }
 
@@ -1606,7 +1606,7 @@ static void
 sig_hand(int32_t sig)
 {
 	(void)sig;
-	err("### Backup interrupted ###");
+	err("### Validation interrupted ###");
 	stop = true;
 }
 
@@ -1663,7 +1663,7 @@ safe_join(pthread_t thread, void **thread_res)
 static void
 print_version(void)
 {
-	fprintf(stdout, "Aerospike Backup Utility\n");
+	fprintf(stdout, "Aerospike Validation Utility\n");
 	fprintf(stdout, "Version %s\n", TOOL_VERSION);
 	fprintf(stdout, "C Client Version %s\n", aerospike_client_version);
 	fprintf(stdout, "Copyright 2015-2017 Aerospike. All rights reserved.\n");
@@ -1680,12 +1680,12 @@ usage(const char *name)
 	fprintf(stderr, "Usage: %s [OPTIONS]\n", name);
 	fprintf(stderr, "------------------------------------------------------------------------------");
 	fprintf(stderr, "\n");
-	fprintf(stderr, " -V, --version        Print ASBACKUP version information.\n");
+	fprintf(stderr, " -V, --version        Print ASVALIDATION version information.\n");
 	fprintf(stderr, " -O, --options        Print command-line options message.\n");
 	fprintf(stderr, " -Z, --usage          Display this message.\n\n");
 	fprintf(stderr, " -v, --verbose        Enable verbose output. Default: disabled\n");
 	fprintf(stderr, " -r, --remove-files\n");
-	fprintf(stderr, "                      Remove existing backup file (-o) or files (-d).\n");
+	fprintf(stderr, "                      Remove existing validation file (-o) or files (-d).\n");
 	fprintf(stderr, "                      NOT allowed in configuration file\n");
 
 	fprintf(stderr, "\n --cdt-validate\n");
@@ -1733,7 +1733,7 @@ usage(const char *name)
 	fprintf(stderr, "                      Set the TLS protocol selection criteria. This format\n"
                     "                      is the same as Apache's SSLProtocol documented at http\n"
                     "                      s://httpd.apache.org/docs/current/mod/mod_ssl.html#ssl\n"
-                    "                      protocol . If not specified the asbackup will use '-all\n"
+                    "                      protocol . If not specified the asvalidation will use '-all\n"
                     "                      +TLSv1.2' if has support for TLSv1.2,otherwise it will\n"
                     "                      be '-all +TLSv1'.\n");
 	fprintf(stderr, " --tls-cipher-suite=TLS_CIPHER_SUITE\n");
@@ -1774,19 +1774,19 @@ usage(const char *name)
                     "                      tls_capath.\n");
 
 
-	fprintf(stderr, "[asbackup]\n");
+	fprintf(stderr, "[asvalidation]\n");
 	fprintf(stderr, "  -n, --namespace <namespace>\n");
 	fprintf(stderr, "                      The namespace to be backed up. Required.\n");
 	fprintf(stderr, "  -s, --set <set>\n");
 	fprintf(stderr, "                      The set to be backed up. Default: all sets.\n");
 	fprintf(stderr, "  -d, --directory <directory>\n");
-	fprintf(stderr, "                      The directory that holds the backup files. Required, \n");
+	fprintf(stderr, "                      The directory that holds the validation files. Required, \n");
 	fprintf(stderr, "                      unless -o or -e is used.\n");
 	fprintf(stderr, "  -o, --output-file <file>\n");
-	fprintf(stderr, "                      Backup to a single backup file. Use - for stdout.\n");
+	fprintf(stderr, "                      Write to a single validation file. Use - for stdout.\n");
 	fprintf(stderr, "                      Required, unless -d or -e is used.\n");
 	fprintf(stderr, "  -F, --file-limit\n");
-	fprintf(stderr, "                      Rotate backup files, when their size crosses the given\n");
+	fprintf(stderr, "                      Rotate validation files, when their size crosses the given\n");
 	fprintf(stderr, "                      value (in MiB) Only used when backing up to a directory.\n");
 	fprintf(stderr, "                      Default: 250.\n");
 	fprintf(stderr, "  -f, --priority <priority>\n");
@@ -1797,22 +1797,22 @@ usage(const char *name)
 	fprintf(stderr, "                      Do not apply rps limit if records-per-second is zero.\n");
 	fprintf(stderr, "                      Default: 0.\n");
 	fprintf(stderr, "  -c, --no-cluster-change\n");
-	fprintf(stderr, "                      Abort, if the cluster configuration changes during backup.\n");
+	fprintf(stderr, "                      Abort, if the cluster configuration changes during validation.\n");
 	fprintf(stderr, "  -v, --verbose\n");
 	fprintf(stderr, "                      Enable more detailed logging.\n");
 	fprintf(stderr, "  -x, --no-bins\n");
-	fprintf(stderr, "                      Do not include bin data in the backup.\n");
+	fprintf(stderr, "                      Do not include bin data in the validation.\n");
 	fprintf(stderr, "  -C, --compact\n");
 	fprintf(stderr, "                      Do not apply base-64 encoding to BLOBs; results in smaller\n");
-	fprintf(stderr, "                      backup files.\n");
+	fprintf(stderr, "                      validation files.\n");
 	fprintf(stderr, "  -B, --bin-list <bin 1>[,<bin 2>[,...]]\n");
-	fprintf(stderr, "                      Only include the given bins in the backup.\n");
+	fprintf(stderr, "                      Only include the given bins in the validation.\n");
 	fprintf(stderr, "                      Default: include all bins.\n");
 	fprintf(stderr, "  -w, --parallel <# nodes>\n");
 	fprintf(stderr, "                      Maximal number of nodes backed up in parallel. Default: 10.\n");
 	fprintf(stderr, "  -l, --node-list     <IP addr 1>:<port 1>[,<IP addr 2>:<port 2>[,...]]\n");
 	fprintf(stderr, "                      <IP addr 1>:<TLS_NAME 1>:<port 1>[,<IP addr 2>:<TLS_NAME 2>:<port 2>[,...]]\n");
-	fprintf(stderr, "                      Backup the given cluster nodes only. Default: backup the \n");
+	fprintf(stderr, "                      Validate the given cluster nodes only. Default: validate the \n");
 	fprintf(stderr, "                      whole cluster.\n");
 	fprintf(stderr, "  -m, --machine <path>\n");
 	fprintf(stderr, "                      Output machine-readable status updates to the given path, \n");
@@ -1820,7 +1820,7 @@ usage(const char *name)
 	fprintf(stderr, "  -N, --nice <bandwidth>\n");
 	fprintf(stderr, "                      The limit for write storage bandwidth in MiB/s.\n");
 	fprintf(stderr, "  -a, --modified-after <YYYY-MM-DD_HH:MM:SS>\n");
-	fprintf(stderr, "                      Perform an incremental backup; only include records \n");
+	fprintf(stderr, "                      Perform an incremental validation; only include records \n");
 	fprintf(stderr, "                      that changed after the given date and time. The system's \n");
 	fprintf(stderr, "                      local timezone applies. If only HH:MM:SS is specified, then\n");
 	fprintf(stderr, "                      today's date is assumed as the date. If only YYYY-MM-DD is \n");
@@ -1833,13 +1833,13 @@ usage(const char *name)
 	fprintf(stderr, "\n\n");
 	fprintf(stderr, "Default configuration files are read from the following files in the given order:\n");
 	fprintf(stderr, "/etc/aerospike/astools.conf ~/.aerospike/astools.conf\n");
-	fprintf(stderr, "The following sections are read: (cluster asbackup include)\n");
+	fprintf(stderr, "The following sections are read: (cluster asvalidation include)\n");
 	fprintf(stderr, "The following options effect configuration file behavior\n");
 	fprintf(stderr, " --no-config-file \n");
 	fprintf(stderr, "                      Do not read any config file. Default: disabled\n");
 	fprintf(stderr, " --instance <name>\n");
 	fprintf(stderr, "                      Section with these instance is read. e.g in case instance `a` is specified\n");
-	fprintf(stderr, "                      sections cluster_a, asbackup_a is read.\n");
+	fprintf(stderr, "                      sections cluster_a, asvalidation_a is read.\n");
 	fprintf(stderr, " --config-file <path>\n");
 	fprintf(stderr, "                      Read this file after default configuration file.\n");
 	fprintf(stderr, " --only-config-file <path>\n");
@@ -2367,7 +2367,7 @@ main(int32_t argc, char **argv)
 		as_scan_predexp_add(&scan, as_predexp_and(2));
 	}
 
-	inf("Starting %d%% backup of %s (namespace: %s, set: %s, bins: %s, after: %s, before: %s) to %s",
+	inf("Starting %d%% validation of %s (namespace: %s, set: %s, bins: %s, after: %s, before: %s) to %s",
 			scan.percent, conf.host, scan.ns, scan.set[0] == 0 ? "[all]" : scan.set,
 			conf.bin_list == NULL ? "[all]" : conf.bin_list, after, before,
 			conf.output_file != NULL ?
@@ -2475,7 +2475,7 @@ main(int32_t argc, char **argv)
 
 	if (has_ldt) {
 		err("The cluster has LDT enabled for namespace %s; please use an older version of "
-				"this tool to create a backup", scan.ns);
+				"this tool to create a validation", scan.ns);
 		goto cleanup5;
 	}
 
@@ -2523,7 +2523,7 @@ main(int32_t argc, char **argv)
 	// backup_args.shared_fd; it'll be shared by all backup threads
 	if (conf.output_file != NULL && !open_file(&backup_args.bytes, conf.output_file, conf.scan->ns,
 			0, &backup_args.shared_fd, &fd_buf)) {
-		err("Error while opening shared backup file");
+		err("Error while opening shared validation file");
 		goto cleanup7;
 	}
 
@@ -2535,7 +2535,7 @@ main(int32_t argc, char **argv)
 		memcpy(backup_args.node_name, (*node_names)[i], AS_NODE_NAME_SIZE);
 
 		if (cf_queue_push(job_queue, &backup_args) != CF_QUEUE_OK) {
-			err("Error while queueing backup job");
+			err("Error while queueing validation job");
 			goto cleanup8;
 		}
 	}
@@ -2543,12 +2543,12 @@ main(int32_t argc, char **argv)
 	uint32_t n_threads_ok = 0;
 
 	if (verbose) {
-		ver("Creating %u backup thread(s)", n_threads);
+		ver("Creating %u validation thread(s)", n_threads);
 	}
 
 	for (uint32_t i = 0; i < n_threads; ++i) {
 		if (pthread_create(&backup_threads[i], NULL, backup_thread_func, job_queue) != 0) {
-			err_code("Error while creating backup thread");
+			err_code("Error while creating validation thread");
 			goto cleanup9;
 		}
 
@@ -2559,20 +2559,20 @@ main(int32_t argc, char **argv)
 
 cleanup9:
 	if (verbose) {
-		ver("Waiting for %u backup thread(s)", n_threads_ok);
+		ver("Waiting for %u validation thread(s)", n_threads_ok);
 	}
 
 	void *thread_res;
 
 	for (uint32_t i = 0; i < n_threads_ok; i++) {
 		if (safe_join(backup_threads[i], &thread_res) != 0) {
-			err_code("Error while joining backup thread");
+			err_code("Error while joining validation thread");
 			stop = true;
 			res = EXIT_FAILURE;
 		}
 		else if (thread_res != (void *)EXIT_SUCCESS) {
 			if (verbose) {
-				ver("Backup thread failed");
+				ver("Validation thread failed");
 			}
 
 			res = EXIT_FAILURE;
@@ -2581,7 +2581,7 @@ cleanup9:
 
 cleanup8:
 	if (conf.output_file != NULL && !close_file(&backup_args.shared_fd, &fd_buf)) {
-		err("Error while closing shared backup file");
+		err("Error while closing shared validation file");
 		res = EXIT_FAILURE;
 	}
 

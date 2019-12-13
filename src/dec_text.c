@@ -133,13 +133,13 @@ text_nul_read_until(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *byte
 		esc = false;
 
 		if (len == size - 1) {
-			err("Buffer overflow while reading token in backup block (line %u, col %u)", line_no[0],
+			err("Buffer overflow while reading token in validation block (line %u, col %u)", line_no[0],
 					col_no[0]);
 			return false;
 		}
 
 		if (digits && (ch < '0' || ch > '9') && (!neg || len > 0 || ch != '-')) {
-			err("Invalid character %s in backup block (line %u, col %u), expected digit",
+			err("Invalid character %s in validation block (line %u, col %u), expected digit",
 					print_char(ch), line_no[0], col_no[0]);
 			return false;
 		}
@@ -147,7 +147,7 @@ text_nul_read_until(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *byte
 		buffer[len++] = (char)ch;
 
 		if (fp && !text_check_floating_point(buffer, len)) {
-			err("Invalid character %s in backup block (line %u, col %u), expected floating point "
+			err("Invalid character %s in validation block (line %u, col %u), expected floating point "
 					"notation", print_char(ch), line_no[0], col_no[0]);
 			return false;
 		}
@@ -212,7 +212,7 @@ text_read_size(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int64
 		accu = accu * 10 + (size_t)(buffer[i] - '0');
 
 		if (accu > (size_t)1024 * 1024 * 1024 * 1024 * 1024) {
-			err("Size overflow with number %s in backup block (line %u, col %u)", buffer,
+			err("Size overflow with number %s in validation block (line %u, col %u)", buffer,
 					line_no[0], col_no[0]);
 			return false;
 		}
@@ -258,7 +258,7 @@ text_read_integer(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, in
 		uint64_t digit = (uint64_t)(buffer[i] - '0');
 
 		if (accu > accu_limit || (accu == accu_limit && digit > digit_limit)) {
-			err("Integer overflow with number %s in backup block (line %u, col %u)", buffer,
+			err("Integer overflow with number %s in validation block (line %u, col %u)", buffer,
 					line_no[0], col_no[0]);
 			return false;
 
@@ -301,7 +301,7 @@ text_read_double(FILE *fd, bool legacy, uint32_t *line_no, uint32_t *col_no, int
 	*value = strtod(buffer, &end);
 
 	if (*end != 0) {
-		err("Invalid floating-point value %s in backup block (line %u, col %u)", buffer, line_no[0],
+		err("Invalid floating-point value %s in validation block (line %u, col %u)", buffer, line_no[0],
 				col_no[0]);
 		return false;
 	}
@@ -616,7 +616,7 @@ text_parse_namespace(FILE *fd, bool legacy, as_vector *ns_vec, uint32_t *line_no
 		const char *ns = as_vector_get_ptr(ns_vec, 0);
 
 		if (strcmp(ns, rec->key.ns) != 0) {
-			err("Invalid namespace %s in backup record, expected: %s (line %u, col %u)",
+			err("Invalid namespace %s in validation record, expected: %s (line %u, col %u)",
 					rec->key.ns, ns, line_no[0], col_no[0]);
 			return false;
 		}
@@ -1003,12 +1003,6 @@ text_parse_bin(FILE *fd, bool legacy, as_vector *bin_vec, uint32_t *line_no, uin
 		return true;
 	}
 
-	if (ch == 'U') {
-		err("The backup contains LDTs - please use an older version of this tool to "
-				"restore the backup (line %u, col %u)", line_no[0], col_no[0]);
-		return false;
-	}
-
 	as_bytes_type type;
 	void *buffer;
 	size_t size;
@@ -1125,7 +1119,7 @@ text_parse_record(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, 
 	bool tmp_expired = false;
 
 	if (rec == NULL || expired == NULL) {
-		err("Unexpected record backup block (line %u)", line_no[0]);
+		err("Unexpected record validation block (line %u)", line_no[0]);
 		goto cleanup0;
 	}
 
@@ -1149,7 +1143,7 @@ text_parse_record(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, 
 		} else if (i == 3 && ch == EXPECTED[4]) {
 			++i;
 		} else if (ch != EXPECTED[i]) {
-			err("Unexpected character %s in backup block (line %u, col %u), expected %s",
+			err("Unexpected character %s in validation block (line %u, col %u), expected %s",
 					print_char(ch), line_no[0], col_no[0], print_char(EXPECTED[i]));
 			goto cleanup1;
 		}
@@ -1261,7 +1255,7 @@ text_parse(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, uint32_
 
 	if (ch == EOF) {
 		if (ferror(fd) != 0) {
-			err("Error while reading backup block (line %u, col %u)", line_no[0], col_no[0]);
+			err("Error while reading validation block (line %u, col %u)", line_no[0], col_no[0]);
 			goto out;
 		}
 

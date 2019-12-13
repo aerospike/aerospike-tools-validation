@@ -72,7 +72,7 @@ text_output_integer(uint64_t *bytes, FILE *fd, const char *prefix1, const char *
 	as_integer *v = as_integer_fromval(val);
 
 	if (fprintf_bytes(bytes, fd, "%s%s %" PRId64 "\n", prefix1, prefix2, v->value) < 0) {
-		err_code("Error while writing integer to backup file");
+		err_code("Error while writing integer to validation file");
 		return false;
 	}
 
@@ -99,7 +99,7 @@ text_output_double(uint64_t *bytes, FILE *fd, const char *prefix1, const char *p
 	as_double *v = as_double_fromval(val);
 
 	if (fprintf_bytes(bytes, fd, "%s%s %.17g\n", prefix1, prefix2, v->value) < 0) {
-		err_code("Error while writing double to backup file");
+		err_code("Error while writing double to validation file");
 		return false;
 	}
 
@@ -123,17 +123,17 @@ text_output_data(uint64_t *bytes, FILE *fd, const char *prefix1, const char *pre
 		void *buffer, size_t size)
 {
 	if (fprintf_bytes(bytes, fd, "%s%s %zu ", prefix1, prefix2, size) < 0) {
-		err_code("Error while writing data to backup file [1]");
+		err_code("Error while writing data to validation file [1]");
 		return false;
 	}
 
 	if (fwrite_bytes(bytes, buffer, size, 1, fd) != 1) {
-		err_code("Error while writing data to backup file [2]");
+		err_code("Error while writing data to validation file [2]");
 		return false;
 	}
 
 	if (fprintf_bytes(bytes, fd, "\n") < 0) {
-		err_code("Error while writing data to backup file [3]");
+		err_code("Error while writing data to validation file [3]");
 		return false;
 	}
 
@@ -283,7 +283,7 @@ text_output_value(uint64_t *bytes, FILE *fd, bool compact, const char *bin_name,
 {
 	if (val == NULL || val->type == AS_NIL) {
 		if (fprintf_bytes(bytes, fd, "- N %s\n", bin_name) < 0) {
-			err_code("Error while writing NIL value to backup file");
+			err_code("Error while writing NIL value to validation file");
 			return false;
 		}
 
@@ -358,18 +358,18 @@ text_put_record(uint64_t *bytes, FILE *fd, bool compact, const as_record *rec)
 	}
 
 	if (fprintf_bytes(bytes, fd, "+ n %s\n+ d %s\n", escape(rec->key.ns), enc) < 0) {
-		err_code("Error while writing record meta data to backup file [1]");
+		err_code("Error while writing record meta data to validation file [1]");
 		return false;
 	}
 
 	if (rec->key.set[0] != 0 && fprintf_bytes(bytes, fd, "+ s %s\n", escape(rec->key.set)) < 0) {
-		err_code("Error while writing record meta data to backup file [2]");
+		err_code("Error while writing record meta data to validation file [2]");
 		return false;
 	}
 
 	if (fprintf_bytes(bytes, fd, "+ g %d\n+ t %u\n+ b %d\n", rec->gen, expire,
 			rec->bins.size) < 0) {
-		err_code("Error while writing record meta data to backup file [3]");
+		err_code("Error while writing record meta data to validation file [3]");
 		return false;
 	}
 
