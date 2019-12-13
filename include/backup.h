@@ -51,6 +51,22 @@ typedef struct {
 	bool (*put_record)(uint64_t *bytes, FILE *fd, bool compact, const as_record *rec);
 } backup_encoder;
 
+typedef struct cdt_stats_s {
+	cf_atomic32 count;
+	cf_atomic32 fixed;
+
+	cf_atomic32 need_fix;
+	cf_atomic32 nf_failed;
+	cf_atomic32 nf_order;
+	cf_atomic32 nf_padding;
+
+	cf_atomic32 cannot_fix;
+	cf_atomic32 cf_dupkey; // map only
+	cf_atomic32 cf_nonstorage;
+	cf_atomic32 cf_truncated;
+	cf_atomic32 cf_corrupt;
+} cdt_stats;
+
 ///
 /// The global backup configuration and stats shared by all backup threads and the counter thread.
 ///
@@ -97,23 +113,9 @@ typedef struct {
 	bool cdt_fix;
 	bool cdt_validate_only;
 
-	cf_atomic64 cdt_list_count;
-	cf_atomic64 cdt_map_count;
-
-	cf_atomic64 cdt_fixed; // Successful fix
-
-	cf_atomic64 cdt_need_fix; // Bins need fixing
-	cf_atomic64 cdt_nf_order; // Need fix due to order
-	cf_atomic64 cdt_nf_padding; // Need fix due to padding
-	cf_atomic64 cdt_nf_failed; // Fix failed.
-
-	cf_atomic64 cdt_cannot_fix; // Cannot fix
-	cf_atomic64 cdt_cf_corrupt; // Cannot fix due to general corruption
-	cf_atomic64 cdt_cf_nonstorage; // Cannot fix due to non storage elements
-	cf_atomic64 cdt_cf_truncate; // Cannot fix due to data truncate
-
+	cdt_stats cdt_list;
+	cdt_stats cdt_map;
 } backup_config;
-
 
 ///
 /// The per-node information pushed to the job queue and picked up by the backup threads.
