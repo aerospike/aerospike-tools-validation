@@ -782,8 +782,6 @@ scan_callback(const as_val *val, void *cont)
 ///   - If backing up to a single file: uses the provided shared file descriptor,
 ///     backup_thread_args.shared_fd.
 ///   - If backing up to a directory: creates a new backup file by invoking open_dir_file().
-///   - If handling the first job from the queue: stores secondary index information and UDF files
-///     by invoking process_secondary_indexes() and process_udfs().
 ///   - Initiates a node scan with scan_callback() as the callback and the initialized
 ///     per_node_context as user-specified context.
 ///
@@ -996,13 +994,13 @@ counter_thread_func(void *cont)
 
 	uint64_t records = cf_atomic64_get(conf->rec_count_total);
 	uint64_t bytes = cf_atomic64_get(conf->byte_count_total);
-	inf("Backed up %" PRIu64 " record(s), %u secondary index(es), %u UDF file(s) from %u node(s), "
-			"%" PRIu64 " byte(s) in total (~%" PRIu64 " B/rec)", records, conf->index_count,
-			conf->udf_count, args->n_node_names, bytes, records == 0 ? 0 : bytes / records);
+	inf("Backed up %" PRIu64 " record(s) from %u node(s), "
+			"%" PRIu64 " byte(s) in total (~%" PRIu64 " B/rec)", records,
+			args->n_node_names, bytes, records == 0 ? 0 : bytes / records);
 
 	if (args->mach_fd != NULL && (fprintf(args->mach_fd,
-			"SUMMARY:%" PRIu64 ":%u:%u:%" PRIu64 ":%" PRIu64 "\n", records, conf->index_count,
-			conf->udf_count, bytes, records == 0 ? 0 : bytes / records) < 0 ||
+			"SUMMARY:%" PRIu64 ":%" PRIu64 ":%" PRIu64 "\n", records,
+			bytes, records == 0 ? 0 : bytes / records) < 0 ||
 			fflush(args->mach_fd) == EOF)) {
 		err_code("Error while writing machine-readable summary");
 	}
@@ -2445,8 +2443,6 @@ main(int32_t argc, char **argv)
 	cf_atomic64_set(&conf.rec_count_total, 0);
 	cf_atomic64_set(&conf.byte_count_total, 0);
 	conf.byte_count_limit = conf.bandwidth;
-	conf.index_count = 0;
-	conf.udf_count = 0;
 	uint64_t rec_count_estimate;
 
 	if (!get_object_count(&as, scan.ns, scan.set, node_names, n_node_names, &rec_count_estimate)) {

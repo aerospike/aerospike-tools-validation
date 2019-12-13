@@ -290,74 +290,6 @@ cleanup0:
 }
 
 ///
-/// Deallocates the fields of a udf_param UDF file record.
-///
-/// @param param  The udf_param to be deallocated.
-///
-static void
-free_udf(udf_param *param)
-{
-	cf_free(param->name);
-	cf_free(param->data);
-}
-
-///
-/// Deallocates a vector of udf_param UDF file records.
-///
-/// @param udf_vec  The vector of udf_param records to be deallocated.
-///
-static void
-free_udfs(as_vector *udf_vec)
-{
-	if (verbose) {
-		ver("Freeing %u UDF file(s)", udf_vec->size);
-	}
-
-	for (uint32_t i = 0; i < udf_vec->size; ++i) {
-		udf_param *param = as_vector_get(udf_vec, i);
-		free_udf(param);
-	}
-}
-
-///
-/// Deallocates the fields of an index_param secondary index information record.
-///
-/// @param param  The index_param to be deallocated.
-///
-static void
-free_index(index_param *param)
-{
-	cf_free(param->ns);
-	cf_free(param->set);
-	cf_free(param->name);
-
-	for (uint32_t i = 0; i < param->path_vec.size; ++i) {
-		path_param *param2 = as_vector_get(&param->path_vec, i);
-		cf_free(param2->path);
-	}
-
-	as_vector_destroy(&param->path_vec);
-}
-
-///
-/// Deallocates a vector of index_param secondary index information records.
-///
-/// @param index_vec  The vector of index_param records to be deallocated.
-///
-static void
-free_indexes(as_vector *index_vec)
-{
-	if (verbose) {
-		ver("Freeing %u index(es)", index_vec->size);
-	}
-
-	for (uint32_t i = 0; i < index_vec->size; ++i) {
-		index_param *param = as_vector_get(index_vec, i);
-		free_index(param);
-	}
-}
-
-///
 /// Checks whether the given vector of set names contains the given set name.
 ///
 /// @param set      The set name to be looked for.
@@ -501,7 +433,6 @@ cdt_print_rec(as_record *rec)
 ///     restore_thread_args.shared_fd.
 ///   - If restoring from a directory: opens the backup file given by restore_thread_args.path.
 ///   - Reads the records from the backup file and stores them in the database.
-///   - Secondary indexes and UDF files are not handled here. They are handled on the main thread.
 ///
 /// @param cont  The job queue.
 ///
@@ -622,8 +553,6 @@ restore_thread_func(void *cont)
 		while (true) {
 			as_record rec;
 			bool expired;
-			index_param index;
-			udf_param udf;
 
 			// restoring from a single backup file: allow one thread at a time to read
 			if (ptc.conf->input_file != NULL) {
@@ -643,8 +572,7 @@ restore_thread_func(void *cont)
 
 			cf_clock read_start = verbose ? cf_getus() : 0;
 			decoder_status res = ptc.conf->decoder->parse(ptc.fd, ptc.legacy, ptc.ns_vec,
-					ptc.bin_vec, ptc.line_no, &ptc.conf->total_bytes, &rec, &expired,
-					&index, &udf);
+					ptc.bin_vec, ptc.line_no, &ptc.conf->total_bytes, &rec, &expired);
 			cf_clock read_time = verbose ? cf_getus() - read_start : 0;
 
 			// set the stop flag inside the critical section; see check above
@@ -667,24 +595,6 @@ restore_thread_func(void *cont)
 			if (res == DECODER_ERROR) {
 				err("Error while restoring backup file %s (line %u)", ptc.path, *ptc.line_no);
 				break;
-			}
-
-			if (res == DECODER_INDEX) {
-				if (verbose) {
-					ver("Ignoring index block");
-				}
-
-				free_index(&index);
-				continue;
-			}
-
-			if (res == DECODER_UDF) {
-				if (verbose) {
-					ver("Ignoring UDF file block");
-				}
-
-				free_udf(&udf);
-				continue;
 			}
 
 			if (res == DECODER_RECORD) {
@@ -902,14 +812,12 @@ counter_thread_func(void *cont)
 		uint64_t existed_records = cf_atomic64_get(conf->existed_records);
 		uint64_t fresher_records = cf_atomic64_get(conf->fresher_records);
 		uint64_t backoff_count = cf_atomic64_get(conf->backoff_count);
-		uint32_t index_count = conf->index_count;
-		uint32_t udf_count = conf->udf_count;
 
 		if (last_iter || iter++ % 10 == 0) {
-			inf("%u UDF file(s), %u secondary index(es), %" PRIu64 " record(s) "
+			inf("%" PRIu64 " record(s) "
 					"(%" PRIu64 " KiB/s, %" PRIu64 " rec/s, %" PRIu64 " B/rec, backed off: "
 					"%" PRIu64 ")",
-					udf_count, index_count, now_records,
+					now_records,
 					ms == 0 ? 0 : bytes * 1000 / 1024 / ms, ms == 0 ? 0 : records * 1000 / ms,
 					records == 0 ? 0 : bytes / records, backoff_count);
 			inf("Expired %" PRIu64 " : skipped %" PRIu64 " : err_ignored %" PRIu64 " "
@@ -951,9 +859,9 @@ counter_thread_func(void *cont)
 
 		if (last_iter) {
 			if (args->mach_fd != NULL && (fprintf(args->mach_fd,
-					"SUMMARY:%u:%u:%" PRIu64 ":%" PRIu64 ":%" PRIu64 ":%" PRIu64 " "
-					":%" PRIu64 ":%" PRIu64 ":%" PRIu64 "\n", udf_count,
-					index_count, now_records, expired_records, skipped_records,
+					"SUMMARY:%" PRIu64 ":%" PRIu64 ":%" PRIu64 ":%" PRIu64 " "
+					":%" PRIu64 ":%" PRIu64 ":%" PRIu64 "\n",
+					now_records, expired_records, skipped_records,
 					ignored_records, inserted_records, existed_records,
 					fresher_records) < 0 ||
 					fflush(args->mach_fd) == EOF)) {
@@ -1241,18 +1149,6 @@ usage(const char *name)
 	fprintf(stderr, "  -N, --nice <bandwidth>,<TPS>\n");
 	fprintf(stderr, "                      The limits for read storage bandwidth in MiB/s and \n");
 	fprintf(stderr, "                      write operations in TPS.\n");
-	fprintf(stderr, "  -R, --no-records\n");
-	fprintf(stderr, "                      Don't restore any records.\n");
-	fprintf(stderr, "  -I, --no-indexes\n");
-	fprintf(stderr, "                      Don't restore any secondary indexes.\n");
-	fprintf(stderr, "  -L, --indexes-last\n");
-	fprintf(stderr, "                      Restore secondary indexes only after UDFs and records \n");
-	fprintf(stderr, "                      have been restored.\n");
-	fprintf(stderr, "  -F, --no-udfs\n");
-	fprintf(stderr, "                      Don't restore any UDFs.\n");
-	fprintf(stderr, "  -w, --wait\n");
-	fprintf(stderr, "                      Wait for restored secondary indexes to finish building.\n");
-	fprintf(stderr, "                      Wait for restored UDFs to be distributed across the cluster.\n");
 	fprintf(stderr, " -T TIMEOUT, --timeout=TIMEOUT\n");
 	fprintf(stderr, "                      Set the timeout (ms) for commands. Default: 10000\n");
 
@@ -1338,11 +1234,6 @@ main(int32_t argc, char **argv)
 		{ "replace", no_argument, NULL, 'r' },
 		{ "no-generation", no_argument, NULL, 'g' },
 		{ "nice", required_argument, NULL, 'N' },
-		{ "no-records", no_argument, NULL, 'R' },
-		{ "no-indexes", no_argument, NULL, 'I' },
-		{ "indexes-last", no_argument, NULL, 'L' },
-		{ "no-udfs", no_argument, NULL, 'F' },
-		{ "wait", no_argument, NULL, 'w' },
 		{ "services-alternate", no_argument, NULL, 'S' },
 		{ "timeout", required_argument, 0, 'T' },
 		{ NULL, 0, NULL, 0 }
@@ -1529,14 +1420,6 @@ main(int32_t argc, char **argv)
 
 		case 'N':
 			conf.nice_list = safe_strdup(optarg);
-			break;
-
-		case 'R':
-			conf.no_records = true;
-			break;
-
-		case 'w':
-			conf.wait = true;
 			break;
 
 		case 'S':
@@ -1735,8 +1618,6 @@ main(int32_t argc, char **argv)
 	cf_atomic64_set(&conf.existed_records, 0);
 	cf_atomic64_set(&conf.fresher_records, 0);
 	cf_atomic64_set(&conf.backoff_count, 0);
-	conf.index_count = 0;
-	conf.udf_count = 0;
 
 	pthread_t counter_thread;
 	counter_thread_args counter_args;
@@ -1770,10 +1651,8 @@ main(int32_t argc, char **argv)
 
 	uint32_t line_no;
 	void *fd_buf = NULL;
-	as_vector file_vec, index_vec, udf_vec, ns_vec, nice_vec, bin_vec, set_vec;
+	as_vector file_vec, ns_vec, nice_vec, bin_vec, set_vec;
 	as_vector_inita(&file_vec, sizeof (void *), 25)
-	as_vector_inita(&index_vec, sizeof (index_param), 25);
-	as_vector_inita(&udf_vec, sizeof (udf_param), 25);
 	as_vector_inita(&ns_vec, sizeof (void *), 25);
 	as_vector_inita(&nice_vec, sizeof (void *), 25);
 	as_vector_inita(&bin_vec, sizeof (void *), 25);
@@ -1873,7 +1752,7 @@ main(int32_t argc, char **argv)
 		// open the file, file descriptor goes to restore_args.shared_fd
 		if (!open_file(conf.input_file, restore_args.ns_vec, &restore_args.shared_fd, &fd_buf,
 				&restore_args.legacy, &line_no, NULL, &conf.total_bytes,
-				conf.no_records ? NULL : &conf.estimated_bytes)) {
+				&conf.estimated_bytes)) {
 			err("Error while opening shared backup file");
 			goto cleanup6;
 		}
@@ -1892,11 +1771,6 @@ main(int32_t argc, char **argv)
 				goto cleanup8;
 			}
 		}
-	}
-
-	if (conf.no_records) {
-		res = EXIT_SUCCESS;
-		goto cleanup9;
 	}
 
 	inf("Restoring records");
@@ -1940,11 +1814,7 @@ cleanup10:
 		}
 	}
 
-cleanup9:
 cleanup8:
-	free_indexes(&index_vec);
-	free_udfs(&udf_vec);
-
 	if (conf.directory != NULL) {
 		for (uint32_t i = 0; i < file_vec.size; ++i) {
 			cf_free(as_vector_get_ptr(&file_vec, i));
@@ -1959,8 +1829,6 @@ cleanup6:
 	as_vector_destroy(&bin_vec);
 	as_vector_destroy(&nice_vec);
 	as_vector_destroy(&ns_vec);
-	as_vector_destroy(&udf_vec);
-	as_vector_destroy(&index_vec);
 	as_vector_destroy(&file_vec);
 	cf_queue_destroy(job_queue);
 
@@ -2063,8 +1931,6 @@ config_default(restore_config *conf)
 
 	conf->threads = DEFAULT_THREADS;
 	conf->nice_list = NULL;
-	conf->no_records = false;
-	conf->wait = false;
 	conf->ns_list = NULL;
 	conf->directory = NULL;
 	conf->input_file = NULL;

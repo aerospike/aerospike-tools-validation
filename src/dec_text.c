@@ -1214,324 +1214,18 @@ cleanup0:
 }
 
 ///
-/// Reads and parses secondary index information from the backup file.
-///
-/// @param fd       The file descriptor of the backup file.
-/// @param ns_vec   The (optional) source and (also optional) target namespace to be restored.
-/// @param line_no  The current line number.
-/// @param col_no   The current column number.
-/// @param bytes    Increased by the number of bytes read from the file descriptor.
-/// @param index    The index_param to be populated.
-///
-/// @result         See @ref decoder_status.
-///
-static decoder_status
-text_parse_index(FILE *fd, as_vector *ns_vec, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
-		index_param *index)
-{
-	decoder_status res = DECODER_ERROR;
-
-	if (index == NULL) {
-		err("Unexpected index backup block (line %u)", line_no[0]);
-		goto cleanup0;
-	}
-
-	if (verbose) {
-		ver("Parsing index in line %u", line_no[0]);
-	}
-
-	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-		goto cleanup0;
-	}
-
-	char ns[MAX_TOKEN_SIZE];
-	char set[MAX_TOKEN_SIZE];
-	char name[MAX_TOKEN_SIZE];
-	size_t n_paths;
-
-	if (!text_nul_read_token(fd, false, line_no, col_no, bytes, ns, sizeof ns, " ")) {
-		goto cleanup0;
-	}
-
-	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-		goto cleanup0;
-	}
-
-	if (!text_nul_read_token(fd, false, line_no, col_no, bytes, set, sizeof set, " ")) {
-		goto cleanup0;
-	}
-
-	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-		goto cleanup0;
-	}
-
-	if (!text_nul_read_token(fd, false, line_no, col_no, bytes, name, sizeof name, " ")) {
-		goto cleanup0;
-	}
-
-	if (ns_vec->size > 1) {
-		const char *ns2 = as_vector_get_ptr(ns_vec, 0);
-
-		if (strcmp(ns2, ns) != 0) {
-			err("Invalid namespace %s in index %s, expected: %s (line %u, col %u)", ns, name, ns2,
-					line_no[0], col_no[0]);
-			goto cleanup0;
-		}
-
-		if (ns_vec->size > 1) {
-			ns2 = as_vector_get_ptr(ns_vec, 1);
-			as_strncpy(ns, ns2, MAX_TOKEN_SIZE);
-		}
-	}
-
-	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-		goto cleanup0;
-	}
-
-	int32_t ch = read_char(fd, line_no, col_no, bytes);
-
-	if (ch == EOF) {
-		goto cleanup0;
-	}
-
-	switch (ch) {
-	case 'N':
-		index->type = INDEX_TYPE_NONE;
-		break;
-
-	case 'L':
-		index->type = INDEX_TYPE_LIST;
-		break;
-
-	case 'K':
-		index->type = INDEX_TYPE_MAPKEYS;
-		break;
-
-	case 'V':
-		index->type = INDEX_TYPE_MAPVALUES;
-		break;
-
-	default:
-		err("Invalid index type character %s in block (line %u, col %u)", print_char(ch),
-				line_no[0], col_no[0]);
-		goto cleanup0;
-	}
-
-	index->ns = safe_strdup(ns);
-	index->set = safe_strdup(set);
-	index->name = safe_strdup(name);
-
-	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-		goto cleanup1;
-	}
-
-	if (!text_read_size(fd, false, line_no, col_no, bytes, &n_paths, " ")) {
-		goto cleanup1;
-	}
-
-	if (n_paths == 0) {
-		err("Missing path(s) in index block (line %u, col %u)", line_no[0], col_no[0]);
-		goto cleanup1;
-	}
-
-	as_vector_init(&index->path_vec, sizeof (path_param), 25);
-	path_param path;
-
-	for (size_t i = 0; i < n_paths; ++i) {
-		if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-			goto cleanup2;
-		}
-
-		if (!text_nul_read_token(fd, false, line_no, col_no, bytes, name, sizeof name, " ")) {
-			goto cleanup2;
-		}
-
-		path.path = safe_strdup(name);
-
-		if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-			goto cleanup3;
-		}
-
-		ch = read_char(fd, line_no, col_no, bytes);
-
-		if (ch == EOF) {
-			goto cleanup3;
-		}
-
-		switch (ch) {
-		case 'S':
-			path.type = PATH_TYPE_STRING;
-			break;
-
-		case 'N':
-			path.type = PATH_TYPE_NUMERIC;
-			break;
-
-		case 'G':
-			path.type = PATH_TYPE_GEOJSON;
-			break;
-
-		default:
-			err("Invalid path type character %s in block (line %u, col %u)", print_char(ch),
-					line_no[0], col_no[0]);
-			goto cleanup3;
-		}
-
-		if (!expect_char(fd, line_no, col_no, bytes, i == n_paths - 1 ? '\n' : ' ')) {
-			goto cleanup3;
-		}
-
-		as_vector_append(&index->path_vec, &path);
-	}
-
-	if (verbose) {
-		if (index->set[0] == 0) {
-			ver("Index: %s", index->name);
-		} else {
-			ver("Index: %s (on set %s)", index->name, index->set);
-		}
-	}
-
-	res = DECODER_INDEX;
-	goto cleanup0;
-
-cleanup3:
-	cf_free(path.path);
-
-cleanup2:
-	for (uint32_t i = 0; i < index->path_vec.size; ++i) {
-		path_param *param = as_vector_get(&index->path_vec, i);
-		cf_free(param->path);
-	}
-
-	as_vector_destroy(&index->path_vec);
-
-cleanup1:
-	cf_free(index->name);
-	cf_free(index->set);
-
-cleanup0:
-	return res;
-}
-
-///
-/// Reads and parses UDF files from the backup file.
-///
-/// @param fd       The file descriptor of the backup file.
-/// @param line_no  The current line number.
-/// @param col_no   The current column number.
-/// @param bytes    Increased by the number of bytes read from the file descriptor.
-/// @param udf      The udf_param to be populated.
-///
-/// @result         See @ref decoder_status.
-///
-static decoder_status
-text_parse_udf(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes, udf_param *udf)
-{
-	decoder_status res = DECODER_ERROR;
-
-	if (udf == NULL) {
-		err("Unexpected UDF backup block (line %u)", line_no[0]);
-		goto cleanup0;
-	}
-
-	if (verbose) {
-		ver("Parsing UDF file in line %u", line_no[0]);
-	}
-
-	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-		goto cleanup0;
-	}
-
-	int32_t ch = read_char(fd, line_no, col_no, bytes);
-
-	if (ch == EOF) {
-		goto cleanup0;
-	}
-
-	switch (ch) {
-	case 'L':
-		udf->type = AS_UDF_TYPE_LUA;
-		break;
-
-	default:
-		err("Invalid UDF type character %s in block (line %u, col %u)", print_char(ch),
-				line_no[0], col_no[0]);
-		goto cleanup0;
-	}
-
-	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-		goto cleanup0;
-	}
-
-	char name[MAX_TOKEN_SIZE];
-	size_t size;
-
-	if (!text_nul_read_token(fd, false, line_no, col_no, bytes, name, sizeof name, " ")) {
-		goto cleanup0;
-	}
-
-	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-		goto cleanup0;
-	}
-
-	if (!text_read_size(fd, false, line_no, col_no, bytes, &size, " ")) {
-		goto cleanup0;
-	}
-
-	if (size > UINT_MAX) {
-		err("UDF file %s is too large (%zu bytes)", name, size);
-		goto cleanup0;
-	}
-
-	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
-		goto cleanup0;
-	}
-
-	udf->name = safe_strdup(name);
-	udf->size = (uint32_t)size;
-	udf->data = safe_malloc(size);
-
-	if (!read_block(fd, line_no, col_no, bytes, udf->data, udf->size)) {
-		goto cleanup1;
-	}
-
-	if (!expect_char(fd, line_no, col_no, bytes, '\n')) {
-		goto cleanup1;
-	}
-
-	if (verbose) {
-		ver("UDF file: %s", udf->name);
-	}
-
-	res = DECODER_UDF;
-	goto cleanup0;
-
-cleanup1:
-	cf_free(udf->data);
-	cf_free(udf->name);
-
-cleanup0:
-	return res;
-}
-
-///
 /// Reads and parses an entity from the global section (secondary index information, UDF files)
 /// in the backup file.
 ///
 /// @param fd       The file descriptor of the backup file.
-/// @param ns_vec   The (optional) source and (also optional) target namespace to be restored.
 /// @param line_no  The current line number.
 /// @param col_no   The current column number.
 /// @param bytes    Increased by the number of bytes read from the file descriptor.
-/// @param index    The index_param to be populated.
-/// @param udf      The udf_param to be populated.
 ///
 /// @result         See @ref decoder_status.
 ///
 static decoder_status
-text_parse_global(FILE *fd, as_vector *ns_vec, uint32_t *line_no, uint32_t *col_no, int64_t *bytes,
-		index_param *index, udf_param *udf)
+text_parse_global(FILE *fd, uint32_t *line_no, uint32_t *col_no, int64_t *bytes)
 {
 	if (!expect_char(fd, line_no, col_no, bytes, ' ')) {
 		return DECODER_ERROR;
@@ -1541,14 +1235,6 @@ text_parse_global(FILE *fd, as_vector *ns_vec, uint32_t *line_no, uint32_t *col_
 
 	if (type == EOF) {
 		return DECODER_ERROR;
-	}
-
-	if (type == 'i') {
-		return text_parse_index(fd, ns_vec, line_no, col_no, bytes, index);
-	}
-
-	if (type == 'u') {
-		return text_parse_udf(fd, line_no, col_no, bytes, udf);
 	}
 
 	err("Invalid global type character %s in block (line %u, col %u)", print_char(type), line_no[0],
@@ -1563,7 +1249,7 @@ text_parse_global(FILE *fd, as_vector *ns_vec, uint32_t *line_no, uint32_t *col_
 ///
 decoder_status
 text_parse(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, uint32_t *orig_line_no,
-		cf_atomic64 *total, as_record *rec, bool *expired, index_param *index, udf_param *udf)
+		cf_atomic64 *total, as_record *rec, bool *expired)
 {
 	decoder_status res = DECODER_ERROR;
 	int64_t bytes = 0;
@@ -1590,7 +1276,7 @@ text_parse(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec, uint32_
 	++bytes;
 
 	if (!legacy && ch == GLOBAL_PREFIX[0]) {
-		res = text_parse_global(fd, ns_vec, line_no, col_no, &bytes, index, udf);
+		res = text_parse_global(fd, line_no, col_no, &bytes);
 		goto out;
 	}
 

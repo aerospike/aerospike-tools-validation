@@ -732,9 +732,6 @@ config_restore(toml_table_t *conftab, restore_config *c, const char *instance,
 		} else if (! strcasecmp("nice-list", name)) {
 			status = config_str(curtab, name, (void*)&c->nice_list);
 
-		} else if (! strcasecmp("wait", name)) {
-			status = config_bool(curtab, name, (void*)&c->wait);
-
 		} else if (! strcasecmp("timeout", name)) {
 			status = config_int(curtab, name, (void*)&i_val);
 			if (i_val >= 0) {

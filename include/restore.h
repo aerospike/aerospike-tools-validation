@@ -36,22 +36,10 @@
 #define STAT_INTERVAL 10                ///< The interval for logging per-thread timing stats.
 
 ///
-/// Encapsulates a UDF file.
-///
-typedef struct {
-	as_udf_type type;   ///< The language of the UDF file.
-	char *name;         ///< The name of the UDF file.
-	uint32_t size;      ///< The size of the UDF file.
-	void *data;         ///< The content of the UDF file.
-} udf_param;
-
-///
 /// The result codes for the backup file format decoder.
 ///
 typedef enum {
 	DECODER_RECORD, ///< A record was read and is returned.
-	DECODER_INDEX,  ///< Secondary index information was read and is returned.
-	DECODER_UDF,    ///< A UDF file was read and is returned.
 	DECODER_EOF,    ///< The end of the backup file was encountered.
 	DECODER_ERROR   ///< An error occurred.
 } decoder_status;
@@ -73,16 +61,11 @@ typedef struct {
 	///                  [DECODER_RECORD](@ref decoder_status::DECODER_RECORD).
 	/// @param expired   Indicates that an expired record was read. Only valid, if the result is
 	///                  [DECODER_RECORD](@ref decoder_status::DECODER_RECORD).
-	/// @param index     The returned secondary index information. Only valid, if the result is
-	///                  [DECODER_INDEX](@ref decoder_status::DECODER_INDEX).
-	/// @param udf       The returned UDF file. Only valid, if the result is
-	///                  [DECODER_UDF](@ref decoder_status::DECODER_UDF).
 	///
 	/// @result          See @ref decoder_status.
 	///
 	decoder_status (*parse)(FILE *fd, bool legacy, as_vector *ns_vec, as_vector *bin_vec,
-			uint32_t *line_no, cf_atomic64 *total, as_record *rec, bool *expired,
-			index_param *index, udf_param *udf);
+			uint32_t *line_no, cf_atomic64 *total, as_record *rec, bool *expired);
 } backup_decoder;
 
 ///
@@ -98,8 +81,6 @@ typedef struct {
 	char *password;
 	uint32_t threads;
 	char *nice_list;
-	bool no_records;
-	bool wait;
 	uint32_t timeout;               ///< timeout for Aerospike commands.
 
 	as_config_tls tls;
@@ -148,8 +129,6 @@ typedef struct {
 	volatile uint64_t records_limit;    ///< The current limit for total_records for throttling.
 	                                    ///  This is periodically increased by the counter thread to
 	                                    ///  raise the limit according to the TPS limit.
-	volatile uint32_t index_count;  ///< The number of successfully created secondary indexes.
-	volatile uint32_t udf_count;    ///< The number of successfully stored UDF files.
 	char *auth_mode;                ///< Authentication mode.
 
 	bool cdt_print;
@@ -203,13 +182,3 @@ typedef struct {
 	uint32_t store_ema;         ///< The exponential moving average of store latencies.
 } per_thread_context;
 
-///
-/// Indicates, whether a secondary index exists and matches a given secondary index specification.
-///
-typedef enum {
-	INDEX_STATUS_INVALID,   ///< Invalid.
-	INDEX_STATUS_ABSENT,    ///< The secondary index does not exist.
-	INDEX_STATUS_SAME,      ///< The secondary index exists and it matches the given specification.
-	INDEX_STATUS_DIFFERENT  ///< The secondary index exists, but it does not match the given
-	                        ///  specification.
-} index_status;

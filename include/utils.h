@@ -148,7 +148,6 @@ extern bool get_info(aerospike *as, const char *value, const char *node_name, vo
 		info_callback callback, bool kv_split);
 extern bool get_migrations(aerospike *as, char (*node_names)[][AS_NODE_NAME_SIZE],
 		uint32_t n_node_names, uint64_t *mig_count);
-extern bool parse_index_info(char *ns, char *index_str, index_param *index);
 
 #define LIKELY(x) __builtin_expect(!!(x), 1)    ///< Marks an expression that is likely true.
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)  ///< Marks an expression that is unlikely true.
