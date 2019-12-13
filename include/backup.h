@@ -111,7 +111,7 @@ typedef struct {
 	char *auth_mode;					///< Authentication mode
 
 	bool cdt_fix;
-	bool cdt_validate_only;
+	bool validate_only;
 
 	cdt_stats cdt_list;
 	cdt_stats cdt_map;
