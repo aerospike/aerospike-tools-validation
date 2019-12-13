@@ -290,7 +290,7 @@ typedef struct cdt_fix_s {
 } cdt_fix;
 
 static void
-cdt_check_set_error(const msgpack_in *mp, cdt_fix *cf, cdt_stats *stat)
+cdt_check_set_cannotfix(const msgpack_in *mp, cdt_fix *cf, cdt_stats *stat)
 {
 	cf->need_log = true;
 	cf_atomic32_incr(&stat->cannot_fix);
@@ -318,6 +318,42 @@ cdt_check_sz(msgpack_in *mp, uint32_t sz, cdt_fix *cf, cdt_stats *stat)
 	if (mp->offset > sz) {
 		cf_atomic32_incr(&stat->cannot_fix);
 		cf_atomic32_incr(&stat->cf_truncated);
+	}
+
+	return false;
+}
+
+static bool
+cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
+		uint32_t content_sz)
+{
+	if (ele_count <= 1) {
+		return false;
+	}
+
+	msgpack_in mp = {
+			.buf = contents,
+			.buf_sz = content_sz
+	};
+
+	// Simple O(n^2 / 2) check for dup keys.
+	for (uint32_t i = 0; i < ele_count - 1; i++) {
+		uint32_t cur_off = mp.offset;
+
+		msgpack_sz(&mp);
+
+		uint32_t start_off = mp.offset;
+		msgpack_in rhs = mp;
+
+		for (uint32_t j = i + 1; j < ele_count; j++) {
+			mp.offset = cur_off;
+
+			if (msgpack_cmp(&mp, &rhs) == MSGPACK_CMP_EQUAL) {
+				return true;
+			}
+		}
+
+		mp.offset = start_off;
 	}
 
 	return false;
@@ -364,11 +400,18 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 		cf->contents = mp.buf + mp.offset;
 
 		if (msgpack_sz_rep(&mp, 2 * ele_count) == 0 || mp.has_nonstorage) {
-			cdt_check_set_error(&mp, cf, &bc->cdt_map);
+			cdt_check_set_cannotfix(&mp, cf, &bc->cdt_map);
 			return false;
 		}
 
 		cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
+
+		if (cdt_map_dup_key_check(ele_count, cf->contents, cf->content_sz)) {
+			cf->need_log = true;
+			cf_atomic32_incr(&bc->cdt_map.cannot_fix);
+			cf_atomic32_incr(&bc->cdt_map.cf_dupkey);
+			return false;
+		}
 
 		return cdt_check_sz(&mp, sz, cf, &bc->cdt_map);
 	}
@@ -384,7 +427,7 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 	msgpack_in mp_prev = mp;
 
 	if (msgpack_sz_rep(&mp, 2) == 0 || mp.has_nonstorage) {
-		cdt_check_set_error(&mp, cf, &bc->cdt_map);
+		cdt_check_set_cannotfix(&mp, cf, &bc->cdt_map);
 		return false;
 	}
 
@@ -393,7 +436,7 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 		if (msgpack_sz(&mp_prev) == 0 || msgpack_sz(&mp) == 0 ||
 				mp.has_nonstorage) {
-			cdt_check_set_error(&mp, cf, &bc->cdt_map);
+			cdt_check_set_cannotfix(&mp, cf, &bc->cdt_map);
 			return false;
 		}
 
@@ -401,7 +444,7 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			if (mp.has_nonstorage || (ele_count - i - 1 != 0 &&
 					(msgpack_sz_rep(&mp, 2 * (ele_count - i - 2)) == 0 ||
 							mp.has_nonstorage))) {
-				cdt_check_set_error(&mp, cf, &bc->cdt_map);
+				cdt_check_set_cannotfix(&mp, cf, &bc->cdt_map);
 				return false;
 			}
 
@@ -409,6 +452,14 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			cf->nf_map_order = true;
 
 			if (mp.offset <= sz) {
+				if (cdt_map_dup_key_check(ele_count, cf->contents,
+						cf->content_sz)) {
+					cf->need_log = true;
+					cf_atomic32_incr(&bc->cdt_map.cannot_fix);
+					cf_atomic32_incr(&bc->cdt_map.cf_dupkey);
+					return false;
+				}
+
 				cf_atomic32_incr(&bc->cdt_map.need_fix);
 				cf_atomic32_incr(&bc->cdt_map.nf_order);
 
@@ -420,6 +471,7 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 				return true; // fix order and maybe padding
 			}
 
+			cf->need_log = true;
 			cf_atomic32_incr(&bc->cdt_map.cannot_fix);
 			cf_atomic32_incr(&bc->cdt_map.cf_truncated);
 			return false;
@@ -471,7 +523,7 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 		cf->contents = mp.buf + mp.offset;
 
 		if (msgpack_sz_rep(&mp, ele_count) == 0 || mp.has_nonstorage) {
-			cdt_check_set_error(&mp, cf, &bc->cdt_list);
+			cdt_check_set_cannotfix(&mp, cf, &bc->cdt_list);
 			return false;
 		}
 
@@ -491,7 +543,7 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 	msgpack_in mp_prev = mp;
 
 	if (msgpack_sz_rep(&mp, 1) == 0 || mp.has_nonstorage) {
-		cdt_check_set_error(&mp, cf, &bc->cdt_list);
+		cdt_check_set_cannotfix(&mp, cf, &bc->cdt_list);
 		return false;
 	}
 
@@ -502,7 +554,7 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			if (mp.has_nonstorage || (ele_count - i - 1 != 0 &&
 					(msgpack_sz_rep(&mp, ele_count - i - 2) == 0 ||
 							mp.has_nonstorage))) {
-				cdt_check_set_error(&mp, cf, &bc->cdt_list);
+				cdt_check_set_cannotfix(&mp, cf, &bc->cdt_list);
 				return false;
 			}
 
@@ -560,6 +612,12 @@ cdt_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 extern bool
 as_cdt_add_packed(as_packer* pk, as_operations* ops, const as_bin_name name, as_operator op_type);
 
+static void
+cdt_fix_list(aerospike *as, as_record *rec)
+{
+
+}
+
 // Return true to log the record.
 static bool
 cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
@@ -575,9 +633,9 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 		}
 
 		as_bytes *b = (as_bytes *)val;
+		as_bytes_type b_type = as_bytes_get_type(b);
 
-		if (as_bytes_get_type(b) != AS_BYTES_LIST &&
-				as_bytes_get_type(b) != AS_BYTES_MAP) {
+		if (b_type != AS_BYTES_LIST && b_type != AS_BYTES_MAP) {
 			continue;
 		}
 
@@ -594,8 +652,9 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 			continue;
 		}
 
+		need_log = true;
+
 		if (bc->cdt_validate_only) {
-			need_log = true;
 			continue;
 		}
 
@@ -608,7 +667,6 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 					AEROSPIKE_OK) {
 				err("aerospike_key_put() returned %d - %s", error.code, error.message);
 				cf_atomic32_incr(&bc->cdt_list.nf_failed);
-				need_log = true;
 				continue;
 			}
 
@@ -650,7 +708,6 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 			err("as_cdt_add_packed() failed");
 			as_operations_destroy(&ops);
 			cf_atomic32_incr(&bc->cdt_list.nf_failed);
-			need_log = true;
 			continue;
 		}
 
@@ -661,12 +718,10 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 			err("as_testlist_op() returned %d - %s", error.code, error.message);
 			as_operations_destroy(&ops);
 			cf_atomic32_incr(&bc->cdt_list.nf_failed);
-			need_log = true;
 			continue;
 		}
 
 		as_operations_destroy(&ops);
-		need_log = true;
 		cf_atomic32_incr(&bc->cdt_list.fixed);
 	}
 
