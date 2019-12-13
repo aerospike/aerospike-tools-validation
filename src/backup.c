@@ -719,7 +719,7 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 
 		need_log = true;
 
-		if (bc->validate_only) {
+		if (! bc->cdt_fix) {
 			continue;
 		}
 
@@ -1064,31 +1064,29 @@ counter_thread_func(void *cont)
 		err_code("Error while writing machine-readable summary");
 	}
 
-	if (conf->cdt_fix) {
-		inf("CDT Mode: %s", conf->validate_only ? "validate" : "fix");
-		inf("%10u Lists", conf->cdt_list.count);
-		inf("%10u   Fixed", conf->cdt_list.fixed);
-		inf("%10u   Unfixable", conf->cdt_list.cannot_fix);
-		inf("%10u     Has non-storage", conf->cdt_list.cf_nonstorage);
-		inf("%10u     Truncated", conf->cdt_list.cf_truncated);
-		inf("%10u     Corrupted", conf->cdt_list.cf_corrupt);
-		inf("%10u   Need Fix", conf->cdt_list.need_fix);
-		inf("%10u     Fix failed", conf->cdt_list.nf_failed);
-		inf("%10u     Order", conf->cdt_list.nf_order);
-		inf("%10u     Padding", conf->cdt_list.nf_padding);
+	inf("CDT Mode: %s", conf->cdt_fix ? "fix" : "validate");
+	inf("%10u Lists", conf->cdt_list.count);
+	inf("%10u   Fixed", conf->cdt_list.fixed);
+	inf("%10u   Unfixable", conf->cdt_list.cannot_fix);
+	inf("%10u     Has non-storage", conf->cdt_list.cf_nonstorage);
+	inf("%10u     Truncated", conf->cdt_list.cf_truncated);
+	inf("%10u     Corrupted", conf->cdt_list.cf_corrupt);
+	inf("%10u   Need Fix", conf->cdt_list.need_fix);
+	inf("%10u     Fix failed", conf->cdt_list.nf_failed);
+	inf("%10u     Order", conf->cdt_list.nf_order);
+	inf("%10u     Padding", conf->cdt_list.nf_padding);
 
-		inf("%10u Maps", conf->cdt_map.count);
-		inf("%10u   Fixed", conf->cdt_map.fixed);
-		inf("%10u   Unfixable", conf->cdt_map.cannot_fix);
-		inf("%10u     Has duplicate keys", conf->cdt_map.cf_dupkey);
-		inf("%10u     Has non-storage", conf->cdt_map.cf_nonstorage);
-		inf("%10u     Truncated", conf->cdt_map.cf_truncated);
-		inf("%10u     Corrupted", conf->cdt_map.cf_corrupt);
-		inf("%10u   Need Fix", conf->cdt_map.need_fix);
-		inf("%10u     Fix failed", conf->cdt_map.nf_failed);
-		inf("%10u     Order", conf->cdt_map.nf_order);
-		inf("%10u     Padding", conf->cdt_map.nf_padding);
-	}
+	inf("%10u Maps", conf->cdt_map.count);
+	inf("%10u   Fixed", conf->cdt_map.fixed);
+	inf("%10u   Unfixable", conf->cdt_map.cannot_fix);
+	inf("%10u     Has duplicate keys", conf->cdt_map.cf_dupkey);
+	inf("%10u     Has non-storage", conf->cdt_map.cf_nonstorage);
+	inf("%10u     Truncated", conf->cdt_map.cf_truncated);
+	inf("%10u     Corrupted", conf->cdt_map.cf_corrupt);
+	inf("%10u   Need Fix", conf->cdt_map.need_fix);
+	inf("%10u     Fix failed", conf->cdt_map.nf_failed);
+	inf("%10u     Order", conf->cdt_map.nf_order);
+	inf("%10u     Padding", conf->cdt_map.nf_padding);
 
 	if (verbose) {
 		ver("Leaving counter thread");
@@ -2225,9 +2223,6 @@ main(int32_t argc, char **argv)
 		case CONFIG_FILE_OPT_ONLY_CONFIG_FILE:
 			break;
 
-		case VALIDATE_ONLY_OPT:
-			conf.validate_only = true;
-			// no break
 		case CDT_FIX_OPT:
 			conf.cdt_fix = true;
 			break;
