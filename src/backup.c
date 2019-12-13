@@ -141,8 +141,8 @@ close_file(FILE **fd, void **fd_buf)
 /// @result            `true`, if successful.
 ///
 static bool
-open_file(uint64_t *bytes, const char *file_path, const char *ns, uint64_t disk_space,
-		FILE **fd, void **fd_buf)
+open_file(uint64_t *bytes, const char *file_path, const char *ns,
+		uint64_t disk_space, FILE **fd, void **fd_buf)
 {
 	if (verbose) {
 		ver("Opening backup file %s", file_path);
@@ -280,39 +280,44 @@ typedef struct cdt_fix_s {
 	uint32_t content_sz;
 	uint32_t ele_count;
 	uint32_t nf_padding;
+
 	bool nf_list_order;
+
+	bool nf_map_order;
+	bool nf_map_dupkey;
+
 	bool need_log;
 } cdt_fix;
 
 static void
-cdt_check_set_error(const msgpack_in *mp, cdt_fix *cf, backup_config *bc)
+cdt_check_set_error(const msgpack_in *mp, cdt_fix *cf, cdt_stats *stat)
 {
 	cf->need_log = true;
-	cf_atomic64_incr(&bc->cdt_cannot_fix);
+	cf_atomic32_incr(&stat->cannot_fix);
 
 	if (mp->has_nonstorage) {
-		cf_atomic64_incr(&bc->cdt_cf_nonstorage);
+		cf_atomic32_incr(&stat->cf_nonstorage);
 	}
 	else {
-		cf_atomic64_incr(&bc->cdt_cf_corrupt);
+		cf_atomic32_incr(&stat->cf_corrupt);
 	}
 }
 
 // Return true for need padding fix.
 static bool
-cdt_check_sz(msgpack_in *mp, uint32_t sz, cdt_fix *cf, backup_config *bc)
+cdt_check_sz(msgpack_in *mp, uint32_t sz, cdt_fix *cf, cdt_stats *stat)
 {
 	if (mp->offset < sz) {
 		cf->need_log = true;
-		cf_atomic64_incr(&bc->cdt_need_fix);
-		cf_atomic64_incr(&bc->cdt_nf_padding);
+		cf_atomic32_incr(&stat->need_fix);
+		cf_atomic32_incr(&stat->nf_padding);
 		cf->nf_padding = sz - mp->offset;
 		return true;
 	}
 
 	if (mp->offset > sz) {
-		cf_atomic64_incr(&bc->cdt_cannot_fix);
-		cf_atomic64_incr(&bc->cdt_cf_truncate);
+		cf_atomic32_incr(&stat->cannot_fix);
+		cf_atomic32_incr(&stat->cf_truncated);
 	}
 
 	return false;
@@ -332,9 +337,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 	if (! msgpack_get_map_ele_count(&mp, &ele_count)) {
 		cf->need_log = true;
-		cf_atomic64_incr(&bc->cdt_cannot_fix);
-		cf_atomic64_incr(&bc->cdt_cf_corrupt);
-err("map header");
+		cf_atomic32_incr(&bc->cdt_map.cannot_fix);
+		cf_atomic32_incr(&bc->cdt_map.cf_corrupt);
 		return false;
 	}
 
@@ -342,7 +346,7 @@ err("map header");
 		cf->ele_count = ele_count;
 		cf->contents = mp.buf + mp.offset;
 		cf->content_sz = 0;
-		return cdt_check_sz(&mp, sz, cf, bc);
+		return cdt_check_sz(&mp, sz, cf, &bc->cdt_map);
 	}
 
 	msgpack_ext ext;
@@ -350,9 +354,8 @@ err("map header");
 	if (msgpack_peek_is_ext(&mp)) {
 		if (! msgpack_get_ext(&mp, &ext) || msgpack_sz(&mp) == 0) {
 			cf->need_log = true;
-			cf_atomic64_incr(&bc->cdt_cannot_fix);
-			cf_atomic64_incr(&bc->cdt_cf_corrupt);
-err("map ext");
+			cf_atomic32_incr(&bc->cdt_map.cannot_fix);
+			cf_atomic32_incr(&bc->cdt_map.cf_corrupt);
 			return false; // corrupted ext
 		}
 	}
@@ -361,14 +364,13 @@ err("map ext");
 		cf->contents = mp.buf + mp.offset;
 
 		if (msgpack_sz_rep(&mp, 2 * ele_count) == 0 || mp.has_nonstorage) {
-err("map contents");
-			cdt_check_set_error(&mp, cf, bc);
+			cdt_check_set_error(&mp, cf, &bc->cdt_map);
 			return false;
 		}
 
 		cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
 
-		return cdt_check_sz(&mp, sz, cf, bc);
+		return cdt_check_sz(&mp, sz, cf, &bc->cdt_map);
 	}
 
 	cf->ele_count = ele_count - 1;
@@ -376,13 +378,13 @@ err("map contents");
 
 	if (cf->ele_count == 0) {
 		cf->content_sz = 0;
-		return cdt_check_sz(&mp, sz, cf, bc);
+		return cdt_check_sz(&mp, sz, cf, &bc->cdt_map);
 	}
 
 	msgpack_in mp_prev = mp;
 
 	if (msgpack_sz_rep(&mp, 2) == 0 || mp.has_nonstorage) {
-		cdt_check_set_error(&mp, cf, bc);
+		cdt_check_set_error(&mp, cf, &bc->cdt_map);
 		return false;
 	}
 
@@ -391,7 +393,7 @@ err("map contents");
 
 		if (msgpack_sz(&mp_prev) == 0 || msgpack_sz(&mp) == 0 ||
 				mp.has_nonstorage) {
-			cdt_check_set_error(&mp, cf, bc);
+			cdt_check_set_error(&mp, cf, &bc->cdt_map);
 			return false;
 		}
 
@@ -399,34 +401,33 @@ err("map contents");
 			if (mp.has_nonstorage || (ele_count - i - 1 != 0 &&
 					(msgpack_sz_rep(&mp, 2 * (ele_count - i - 2)) == 0 ||
 							mp.has_nonstorage))) {
-err("map ordered contents");
-				cdt_check_set_error(&mp, cf, bc);
+				cdt_check_set_error(&mp, cf, &bc->cdt_map);
 				return false;
 			}
 
 			cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
-//			cf->nf_order = true;
+			cf->nf_map_order = true;
 
 			if (mp.offset <= sz) {
-				cf_atomic64_incr(&bc->cdt_need_fix);
-				cf_atomic64_incr(&bc->cdt_nf_order);
+				cf_atomic32_incr(&bc->cdt_map.need_fix);
+				cf_atomic32_incr(&bc->cdt_map.nf_order);
 
 				if (mp.offset != sz) {
-					cf_atomic64_incr(&bc->cdt_nf_padding);
+					cf_atomic32_incr(&bc->cdt_map.nf_padding);
 					cf->nf_padding = sz - mp.offset;
 				}
 
 				return true; // fix order and maybe padding
 			}
 
-			cf_atomic64_incr(&bc->cdt_cannot_fix);
-			cf_atomic64_incr(&bc->cdt_cf_truncate);
+			cf_atomic32_incr(&bc->cdt_map.cannot_fix);
+			cf_atomic32_incr(&bc->cdt_map.cf_truncated);
 			return false;
 		}
 	}
 
 	cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
-	return cdt_check_sz(&mp, sz, cf, bc);
+	return cdt_check_sz(&mp, sz, cf, &bc->cdt_map);
 }
 
 // Return true for need fix.
@@ -443,8 +444,8 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 	if (! msgpack_get_list_ele_count(&mp, &ele_count)) {
 		cf->need_log = true;
-		cf_atomic64_incr(&bc->cdt_cannot_fix);
-		cf_atomic64_incr(&bc->cdt_cf_corrupt);
+		cf_atomic32_incr(&bc->cdt_list.cannot_fix);
+		cf_atomic32_incr(&bc->cdt_list.cf_corrupt);
 		return false;
 	}
 
@@ -452,7 +453,7 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 		cf->ele_count = ele_count;
 		cf->contents = mp.buf + mp.offset;
 		cf->content_sz = 0;
-		return cdt_check_sz(&mp, sz, cf, bc);
+		return cdt_check_sz(&mp, sz, cf, &bc->cdt_list);
 	}
 
 	msgpack_ext ext;
@@ -460,8 +461,8 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 	if (msgpack_peek_is_ext(&mp)) {
 		if (! msgpack_get_ext(&mp, &ext)) {
 			cf->need_log = true;
-			cf_atomic64_incr(&bc->cdt_cannot_fix);
-			cf_atomic64_incr(&bc->cdt_cf_corrupt);
+			cf_atomic32_incr(&bc->cdt_list.cannot_fix);
+			cf_atomic32_incr(&bc->cdt_list.cf_corrupt);
 			return false; // corrupted ext
 		}
 	}
@@ -470,13 +471,13 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 		cf->contents = mp.buf + mp.offset;
 
 		if (msgpack_sz_rep(&mp, ele_count) == 0 || mp.has_nonstorage) {
-			cdt_check_set_error(&mp, cf, bc);
+			cdt_check_set_error(&mp, cf, &bc->cdt_list);
 			return false;
 		}
 
 		cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
 
-		return cdt_check_sz(&mp, sz, cf, bc);
+		return cdt_check_sz(&mp, sz, cf, &bc->cdt_list);
 	}
 
 	cf->ele_count = ele_count - 1;
@@ -484,13 +485,13 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 	if (cf->ele_count == 0) {
 		cf->content_sz = 0;
-		return cdt_check_sz(&mp, sz, cf, bc);
+		return cdt_check_sz(&mp, sz, cf, &bc->cdt_list);
 	}
 
 	msgpack_in mp_prev = mp;
 
 	if (msgpack_sz_rep(&mp, 1) == 0 || mp.has_nonstorage) {
-		cdt_check_set_error(&mp, cf, bc);
+		cdt_check_set_error(&mp, cf, &bc->cdt_list);
 		return false;
 	}
 
@@ -501,7 +502,7 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			if (mp.has_nonstorage || (ele_count - i - 1 != 0 &&
 					(msgpack_sz_rep(&mp, ele_count - i - 2) == 0 ||
 							mp.has_nonstorage))) {
-				cdt_check_set_error(&mp, cf, bc);
+				cdt_check_set_error(&mp, cf, &bc->cdt_list);
 				return false;
 			}
 
@@ -509,32 +510,32 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			cf->nf_list_order = true;
 
 			if (mp.offset <= sz) {
-				cf_atomic64_incr(&bc->cdt_need_fix);
-				cf_atomic64_incr(&bc->cdt_nf_order);
+				cf_atomic32_incr(&bc->cdt_list.need_fix);
+				cf_atomic32_incr(&bc->cdt_list.nf_order);
 
 				if (mp.offset != sz) {
-					cf_atomic64_incr(&bc->cdt_nf_padding);
+					cf_atomic32_incr(&bc->cdt_list.nf_padding);
 					cf->nf_padding = sz - mp.offset;
 				}
 
 				return true; // fix order and maybe padding
 			}
 
-			cf_atomic64_incr(&bc->cdt_cannot_fix);
-			cf_atomic64_incr(&bc->cdt_cf_truncate);
+			cf_atomic32_incr(&bc->cdt_list.cannot_fix);
+			cf_atomic32_incr(&bc->cdt_list.cf_truncated);
 			return false;
 		}
 	}
 
 	if (mp.has_nonstorage) {
 		cf->need_log = true;
-		cf_atomic64_incr(&bc->cdt_cannot_fix);
-		cf_atomic64_incr(&bc->cdt_cf_nonstorage);
+		cf_atomic32_incr(&bc->cdt_list.cannot_fix);
+		cf_atomic32_incr(&bc->cdt_list.cf_nonstorage);
 		return false;
 	}
 
 	cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
-	return cdt_check_sz(&mp, sz, cf, bc);
+	return cdt_check_sz(&mp, sz, cf, &bc->cdt_list);
 }
 
 // Return true to need fix.
@@ -544,10 +545,10 @@ cdt_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 {
 	switch (msgpack_buf_peek_type(buf, sz)) {
 	case MSGPACK_TYPE_LIST:
-		cf_atomic64_incr(&bc->cdt_list_count);
+		cf_atomic32_incr(&bc->cdt_list.count);
 		return cdt_list_need_fix(buf, sz, cf, bc);
 	case MSGPACK_TYPE_MAP:
-		cf_atomic64_incr(&bc->cdt_map_count);
+		cf_atomic32_incr(&bc->cdt_map.count);
 		return cdt_map_need_fix(buf, sz, cf, bc);
 	default:
 		break;
@@ -606,12 +607,12 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 			if (aerospike_key_put(as, &error, NULL, &rec->key, rec) !=
 					AEROSPIKE_OK) {
 				err("aerospike_key_put() returned %d - %s", error.code, error.message);
-				cf_atomic64_incr(&bc->cdt_nf_failed);
+				cf_atomic32_incr(&bc->cdt_list.nf_failed);
 				need_log = true;
 				continue;
 			}
 
-			cf_atomic64_incr(&bc->cdt_fixed);
+			cf_atomic32_incr(&bc->cdt_list.fixed);
 			continue;
 		}
 
@@ -648,7 +649,7 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 				AS_OPERATOR_CDT_MODIFY)) {
 			err("as_cdt_add_packed() failed");
 			as_operations_destroy(&ops);
-			cf_atomic64_incr(&bc->cdt_nf_failed);
+			cf_atomic32_incr(&bc->cdt_list.nf_failed);
 			need_log = true;
 			continue;
 		}
@@ -659,14 +660,14 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 				AEROSPIKE_OK) {
 			err("as_testlist_op() returned %d - %s", error.code, error.message);
 			as_operations_destroy(&ops);
-			cf_atomic64_incr(&bc->cdt_nf_failed);
+			cf_atomic32_incr(&bc->cdt_list.nf_failed);
 			need_log = true;
 			continue;
 		}
 
 		as_operations_destroy(&ops);
 		need_log = true;
-		cf_atomic64_incr(&bc->cdt_fixed);
+		cf_atomic32_incr(&bc->cdt_list.fixed);
 	}
 
 	return need_log;
@@ -1009,17 +1010,28 @@ counter_thread_func(void *cont)
 
 	if (conf->cdt_fix) {
 		inf("CDT Mode: %s", conf->cdt_validate_only ? "validate" : "fix");
-		inf("%10lu Lists", conf->cdt_list_count);
-		inf("%10lu Maps", conf->cdt_map_count);
-		inf("%10lu Fixed", conf->cdt_fixed);
-		inf("%10lu Unfixable", conf->cdt_cannot_fix);
-		inf("%10lu   Corrupted", conf->cdt_cf_corrupt);
-		inf("%10lu   Has Non-storage", conf->cdt_cf_nonstorage);
-		inf("%10lu   Truncated", conf->cdt_cf_truncate);
-		inf("%10lu Need Fix", conf->cdt_need_fix);
-		inf("%10lu   Fix failed", conf->cdt_nf_failed);
-		inf("%10lu   Order", conf->cdt_nf_order);
-		inf("%10lu   Padding", conf->cdt_nf_padding);
+		inf("%10u Lists", conf->cdt_list.count);
+		inf("%10u   Fixed", conf->cdt_list.fixed);
+		inf("%10u   Unfixable", conf->cdt_list.cannot_fix);
+		inf("%10u     Has non-storage", conf->cdt_list.cf_nonstorage);
+		inf("%10u     Truncated", conf->cdt_list.cf_truncated);
+		inf("%10u     Corrupted", conf->cdt_list.cf_corrupt);
+		inf("%10u   Need Fix", conf->cdt_list.need_fix);
+		inf("%10u     Fix failed", conf->cdt_list.nf_failed);
+		inf("%10u     Order", conf->cdt_list.nf_order);
+		inf("%10u     Padding", conf->cdt_list.nf_padding);
+
+		inf("%10u Maps", conf->cdt_map.count);
+		inf("%10u   Fixed", conf->cdt_map.fixed);
+		inf("%10u   Unfixable", conf->cdt_map.cannot_fix);
+		inf("%10u     Has duplicate keys", conf->cdt_map.cf_dupkey);
+		inf("%10u     Has non-storage", conf->cdt_map.cf_nonstorage);
+		inf("%10u     Truncated", conf->cdt_map.cf_truncated);
+		inf("%10u     Corrupted", conf->cdt_map.cf_corrupt);
+		inf("%10u   Need Fix", conf->cdt_map.need_fix);
+		inf("%10u     Fix failed", conf->cdt_map.nf_failed);
+		inf("%10u     Order", conf->cdt_map.nf_order);
+		inf("%10u     Padding", conf->cdt_map.nf_padding);
 	}
 
 	if (verbose) {
