@@ -719,7 +719,7 @@ cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
 
 		need_log = true;
 
-		if (bc->cdt_validate_only) {
+		if (bc->validate_only) {
 			continue;
 		}
 
@@ -1065,7 +1065,7 @@ counter_thread_func(void *cont)
 	}
 
 	if (conf->cdt_fix) {
-		inf("CDT Mode: %s", conf->cdt_validate_only ? "validate" : "fix");
+		inf("CDT Mode: %s", conf->validate_only ? "validate" : "fix");
 		inf("%10u Lists", conf->cdt_list.count);
 		inf("%10u   Fixed", conf->cdt_list.fixed);
 		inf("%10u   Unfixable", conf->cdt_list.cannot_fix);
@@ -1853,7 +1853,7 @@ main(int32_t argc, char **argv)
 		{ "no-config-file", no_argument, 0, CONFIG_FILE_OPT_NO_CONFIG_FILE},
 		{ "only-config-file", required_argument, 0, CONFIG_FILE_OPT_ONLY_CONFIG_FILE},
 
-		{ "cdt-validate", no_argument, NULL, CDT_VALIDATE_OPT },
+		{ "validate-only", no_argument, NULL, VALIDATE_ONLY_OPT },
 		{ "cdt-fix-ordered-list-unique", no_argument, NULL, CDT_FIX_OPT },
 
 		// Config options
@@ -2225,8 +2225,8 @@ main(int32_t argc, char **argv)
 		case CONFIG_FILE_OPT_ONLY_CONFIG_FILE:
 			break;
 
-		case CDT_VALIDATE_OPT:
-			conf.cdt_validate_only = true;
+		case VALIDATE_ONLY_OPT:
+			conf.validate_only = true;
 			// no break
 		case CDT_FIX_OPT:
 			conf.cdt_fix = true;
