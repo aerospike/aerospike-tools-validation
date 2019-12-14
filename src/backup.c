@@ -1675,10 +1675,8 @@ usage(const char *name)
 	fprintf(stderr, "                      Remove existing validation file (-o) or files (-d).\n");
 	fprintf(stderr, "                      NOT allowed in configuration file\n");
 
-	fprintf(stderr, "\n --cdt-validate\n");
-	fprintf(stderr, "                      Validate CDT records.\n");
 	fprintf(stderr, " --cdt-fix-ordered-list-unique\n");
-	fprintf(stderr, "                      Fix CDT list records.\n");
+	fprintf(stderr, "                      Fix CDT ordered list records.\n");
 
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Configuration File Allowed Options\n");
@@ -1851,7 +1849,6 @@ main(int32_t argc, char **argv)
 		{ "no-config-file", no_argument, 0, CONFIG_FILE_OPT_NO_CONFIG_FILE},
 		{ "only-config-file", required_argument, 0, CONFIG_FILE_OPT_ONLY_CONFIG_FILE},
 
-		{ "validate-only", no_argument, NULL, VALIDATE_ONLY_OPT },
 		{ "cdt-fix-ordered-list-unique", no_argument, NULL, CDT_FIX_OPT },
 
 		// Config options

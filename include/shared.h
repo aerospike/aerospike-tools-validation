@@ -156,8 +156,7 @@ typedef enum {
 } cfgfile_opt;
 
 #define CDT_FIX_OPT 3000
-#define VALIDATE_ONLY_OPT 3001
-#define CDT_PRINT 3002
+#define CDT_PRINT 3001
 
 typedef struct {
 	void *conf;                                 ///< The global configuration and stats.
