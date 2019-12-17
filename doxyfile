@@ -1,4 +1,4 @@
-PROJECT_NAME = "Aerospike Backup Tools"
+PROJECT_NAME = "Aerospike Validation Tools"
 
 OUTPUT_DIRECTORY = .
 INPUT = src include README.md

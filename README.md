@@ -26,28 +26,20 @@ Then build the backup tools and generate the Doxygen documentation.
     make
     make docs
 
-This gives you two binaries in the `bin` subdirectory -- `asvalidation` and `ascorrection` -- as well as the Doxygen HTML documentation in `docs`. Open `docs/index.html` to access the generated documentation.
-
-In order to run the tests that come with the code, you need `asd` installed in `/usr/bin`. The tests invoke `asd` with a separate configuration file, so that your regular database environment remains untouched.
-
-Please make sure that your `python` command is Python 2 and that you have `virtualenv` installed. By default, the tests run `asbackup` and `asrestore` under the Valgrind memory checker. If you don't have the `valgrind` command, please change `USE_VALGRIND` in `test/lib.py` to `False`. Then run the tests.
-
-    make tests
-
-This creates a virtual Python environment in a new subdirectory (`env`), activates it, and installs the Python packages required by the tests. Then the actual tests run.
+This provides `asvalidation` binary in the `bin` subdirectory -- as well as the Doxygen HTML documentation in `docs`. Open `docs/index.html` to access the generated documentation.
 
 ## Validation Source Code
 
 Let's take a quick look at the overall structure of the `asvalidation` source code, at `src/backup.c`. The code does the following, starting at `main()`.
 
   * Parse command line options into local variables or, if they need to be passed to a worker thread later, into a `backup_config` structure.
-  * Initialize an Aerospike client and connect it to the cluster to be backed up.
+  * Initialize an Aerospike client and connect it to the cluster to be validated.
   * Create the counter thread, which starts at `counter_thread_func()`. That's the thread that outputs the status and counter updates during the validation, among other things.
   * When backing up to a single file (`--output-file` option, as opposed to backing up to a directory using `--directory`), create and open that validation file.
-  * Populate a `backup_thread_args` structure for each node to be backed up and submit it to the `job_queue` queue. Note two things:
+  * Populate a `backup_thread_args` structure for each node to be validated and submit it to the `job_queue` queue. Note two things:
     - Only one of the `backup_thread_args` structures gets its `first` member set to `true`.
     - When backing up to a single file, the `shared_fd` member gets the file handle of the created validation file (and `NULL` otherwise).
-  * Spawn validation worker threads, which start at `backup_thread_func()`. There's one of those for each cluster node to be backed up.
+  * Spawn validation worker threads, which start at `backup_thread_func()`. There's one of those for each cluster node to be validated.
   * Wait for all validation worker threads to finish.
   * When backing up to a single file, close that file.
   * Shut down the Aerospike client.
@@ -59,7 +51,7 @@ Let's now look at what the worker threads do, starting at `backup_thread_func()`
   * When backing up to a directory, open an exclusive validation file for the worker thread by invoking `open_dir_file()`.
   * If the validation thread is the single thread that has `first` set to `true` in its `backup_thread_args` structure, store secondary index definitions by invoking `process_secondary_indexes()`, and store UDF files by invoking `process_udfs()`. So, this work is done by a single thread, and that thread is chosen by setting its `first` member to `true`.
   * All other threads wait for the chosen thread to finish its secondary index and UDF file work by invoking `wait_one_shot()`. The chosen thread signals completion by invoking `signal_one_shot()`.
-  * Initiate validation of records by invoking `aerospike_scan_node()` with `scan_callback()` as the callback function that gets invoked for each record in the namespace to be backed up. From here on, all worker threads work in parallel.
+  * Initiate validation of records by invoking `aerospike_scan_node()` with `scan_callback()` as the callback function that gets invoked for each record in the namespace to be validated. From here on, all worker threads work in parallel.
 
 Let's now look at what the callback function, `scan_callback()`, does.
 
@@ -67,40 +59,6 @@ Let's now look at what the callback function, `scan_callback()`, does.
   * When backing up to a single file, acquire the file lock by invoking `safe_lock()`. As all worker threads share the same validation file, we can only allow one thread to write at a time.
   * Invoke the `put_record()` function of the validation encoder for the current record. The encoder implements the validation file format by taking record information and serializing it to the validation file. Its code is in `src/enc_text.c`, its interface in `include/enc_text.h`. Besides `put_record()`, the interface contains `put_secondary_index()` and `put_udf_file()`, which are used to store secondary index definitions and UDF files in a validation file.
   * When backing up to a single file, release the file lock.
-
-## Restore Source Code
-
-Let's now take a quick look at the overall structure of the `asrestore` source code, at `src/restore.c`. The code does the following, starting at `main()`.
-
-  * Parse command line options into local variables or, if they need to be passed to a worker thread later, into a `restore_config` structure.
-  * Initialize an Aerospike client and connect it to the cluster to be restored.
-  * Create the counter thread, which starts at `counter_thread_func()`. That's the thread that outputs the status and counter updates during the restore, among other things.
-  * When restoring from a directory (`--directory` option, as opposed to restoring from a single file using `--input-file`), collect all validation files from that directory. Then go through the validation files, find the one that has the secondary index definitions and UDF files in it, and parse that information by invoking `get_indexes_and_udfs()`. Then populate one `restore_thread_args` structure for each validation file and submit it to the `job_queue` queue.
-  * When restoring from a single file, open that file and populate the `shared_fd` member of the `restore_thread_args` structure with the file handle of that shared validation file. Then parse the secondary index definitions and UDF files from that file by invoking `get_indexes_and_udfs()`. Finally, submit one `restore_thread_args` structure for each worker thread to the job queue.
-  * Restore the UDF files to the cluster by invoking `restore_udfs()`.
-  * When secondary indexes are to be restored before any records, invoke `restore_indexes()` to create them.
-  * Create the restore worker threads, which start at `restore_thread_func()`.
-  * Wait for all restore worker threads to finish.
-  * When secondary indexes are to be restore after all records, invoke `restore_indexes()` to create them.
-  * When restoring from a single file, close that file.
-  * Shut down the Aerospike client.
-
-Let's now look at what the worker threads do, starting at `restore_thread_func()`. The code is pretty similar in structure to its counterpart in `asvalidation`.
-
-  * Pop a `restore_thread_args` structure off the job queue.
-  * Initialize a `per_thread_context` structure. That's where all the data local to a worker thread is kept. Some of the data is initialized from the `restore_thread_args` structure. In particular, when restoring from a single file, the `fd` member of the `per_thread_context` structure is initialized from the `shared_fd` member of the `restore_thread_args` structure. In that way, all restore threads share the same validation file handle.
-  * When restoring from a directory, open an exclusive validation file for the worker thread by invoking `open_file()`.
-  * Set up the write policy, depending on the command line arguments given by the user.
-  * When restoring from a single file, acquire the file lock by invoking `safe_lock()`. As all worker threads read from the same validation file, we can only allow one thread to read at a time.
-  * Invoke the `parse()` function of the validation decoder to read the next record. The decoder is the counterpart to the encoder in `asvalidation`. It implements the validation file format by deserializing record information from the the validation file. Its code is in `src/dec_text.c`, its interface in `include/dec_text.h`.
-  * When backing up to a single file, release the file lock.
-  * Invoke `aerospike_key_put()` to store the current record in the cluster.
-
-For more detailed information, please generate the documentation (`make docs`) and open `docs/index.html`.
-
-## Fill Utility
-
-`fill` is a small utility that populates a database with test data. It fills records with pseudo-random data according to record specifications and adds them to a given set in a given namespace.
 
 ### Record Specifications
 

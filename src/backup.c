@@ -1053,7 +1053,7 @@ counter_thread_func(void *cont)
 
 	uint64_t records = cf_atomic64_get(conf->rec_count_total);
 	uint64_t bytes = cf_atomic64_get(conf->byte_count_total);
-	inf("Backed up %" PRIu64 " record(s) from %u node(s), "
+	inf("Found %" PRIu64 " invalid record(s) from %u node(s), "
 			"%" PRIu64 " byte(s) in total (~%" PRIu64 " B/rec)", records,
 			args->n_node_names, bytes, records == 0 ? 0 : bytes / records);
 
@@ -1761,9 +1761,9 @@ usage(const char *name)
 
 	fprintf(stderr, "[asvalidation]\n");
 	fprintf(stderr, "  -n, --namespace <namespace>\n");
-	fprintf(stderr, "                      The namespace to be backed up. Required.\n");
+	fprintf(stderr, "                      The namespace to be validated. Required.\n");
 	fprintf(stderr, "  -s, --set <set>\n");
-	fprintf(stderr, "                      The set to be backed up. Default: all sets.\n");
+	fprintf(stderr, "                      The set to be validated. Default: all sets.\n");
 	fprintf(stderr, "  -d, --directory <directory>\n");
 	fprintf(stderr, "                      The directory that holds the validation files. Required, \n");
 	fprintf(stderr, "                      unless -o or -e is used.\n");
@@ -1785,8 +1785,6 @@ usage(const char *name)
 	fprintf(stderr, "                      Abort, if the cluster configuration changes during validation.\n");
 	fprintf(stderr, "  -v, --verbose\n");
 	fprintf(stderr, "                      Enable more detailed logging.\n");
-	fprintf(stderr, "  -x, --no-bins\n");
-	fprintf(stderr, "                      Do not include bin data in the validation.\n");
 	fprintf(stderr, "  -C, --compact\n");
 	fprintf(stderr, "                      Do not apply base-64 encoding to BLOBs; results in smaller\n");
 	fprintf(stderr, "                      validation files.\n");
@@ -1794,7 +1792,7 @@ usage(const char *name)
 	fprintf(stderr, "                      Only include the given bins in the validation.\n");
 	fprintf(stderr, "                      Default: include all bins.\n");
 	fprintf(stderr, "  -w, --parallel <# nodes>\n");
-	fprintf(stderr, "                      Maximal number of nodes backed up in parallel. Default: 10.\n");
+	fprintf(stderr, "                      Maximal number of nodes validated in parallel. Default: 10.\n");
 	fprintf(stderr, "  -l, --node-list     <IP addr 1>:<port 1>[,<IP addr 2>:<port 2>[,...]]\n");
 	fprintf(stderr, "                      <IP addr 1>:<TLS_NAME 1>:<port 1>[,<IP addr 2>:<TLS_NAME 2>:<port 2>[,...]]\n");
 	fprintf(stderr, "                      Validate the given cluster nodes only. Default: validate the \n");
@@ -1887,7 +1885,6 @@ main(int32_t argc, char **argv)
 		{ "no-cluster-change", no_argument, NULL, 'c' },
 		{ "compact", no_argument, NULL, 'C' },
 		{ "parallel", required_argument, NULL, 'w' },
-		{ "no-bins", no_argument, NULL, 'x' },
 		{ "bin-list", required_argument, NULL, 'B' },
 		{ "services-alternate", no_argument, NULL, 'S' },
 		{ "namespace", required_argument, NULL, 'n' },
@@ -2096,10 +2093,6 @@ main(int32_t argc, char **argv)
 			verbose = true;
 			break;
 
-		case 'x':
-			scan.no_bins = true;
-			break;
-
 		case 'C':
 			conf.compact = true;
 			break;
@@ -2258,12 +2251,12 @@ main(int32_t argc, char **argv)
 	out_count += conf.output_file != NULL ? 1 : 0;
 
 	if (out_count > 1) {
-		err("Invalid options: --directory, --output-file, and --estimate are mutually exclusive.");
+		err("Invalid options: --directory and --output-file are mutually exclusive.");
 		goto cleanup1;
 	}
 
 	if (out_count == 0) {
-		err("Please specify a directory (-d), an output file (-o), or make an estimate (-e).");
+		err("Please specify a directory (-d), an output file (-o).");
 		goto cleanup1;
 	}
 

@@ -113,9 +113,6 @@ clean:
 	if [ -d $(DIR_DOCS) ]; then rm -r $(DIR_DOCS); fi
 	if [ -d $(DIR_ENV) ]; then rm -r $(DIR_ENV); fi
 
-tests:
-	./tests.sh $(DIR_ENV)
-
 ragel:
 	ragel $(DIR_SRC)/spec.rl
 
