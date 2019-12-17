@@ -79,11 +79,11 @@ close_file(FILE **fd, void **fd_buf)
 	}
 
 	if (verbose) {
-		ver("Closing validation file");
+		ver("Closing output file");
 	}
 
 	if (fflush(*fd) == EOF) {
-		err_code("Error while flushing validation file");
+		err_code("Error while flushing output file");
 		return false;
 	}
 
@@ -112,7 +112,7 @@ close_file(FILE **fd, void **fd_buf)
 		}
 
 		if (fclose(*fd) == EOF) {
-			err_code("Error while closing validation file");
+			err_code("Error while closing output file");
 			return false;
 		}
 	}
@@ -145,25 +145,25 @@ open_file(uint64_t *bytes, const char *file_path, const char *ns,
 		uint64_t disk_space, FILE **fd, void **fd_buf)
 {
 	if (verbose) {
-		ver("Opening validation file %s", file_path);
+		ver("Opening output file %s", file_path);
 	}
 
 	if (strcmp(file_path, "-") == 0) {
 		if (verbose) {
-			ver("Validation file is stdout");
+			ver("output file is stdout");
 		}
 
 		*fd = stdout;
 	} else {
 		if (verbose) {
-			ver("Creating validation file");
+			ver("Creating output file");
 		}
 
 		int32_t res = remove(file_path);
 
 		if (res < 0) {
 			if (errno != ENOENT) {
-				err_code("Error while removing existing validation file %s", file_path);
+				err_code("Error while removing existing output file %s", file_path);
 				return false;
 			}
 		}
@@ -174,28 +174,28 @@ open_file(uint64_t *bytes, const char *file_path, const char *ns,
 		cf_free(tmp_path);
 
 		if ((*fd = fopen(file_path, "w")) == NULL) {
-			err_code("Error while creating validation file %s", file_path);
+			err_code("Error while creating output file %s", file_path);
 			return false;
 		}
 
-		inf("Created new validation file %s", file_path);
+		inf("Created new output file %s", file_path);
 	}
 
 	if (verbose) {
-		ver("Initializing validation file");
+		ver("Initializing output file");
 	}
 
 	*fd_buf = safe_malloc(IO_BUF_SIZE);
 	setbuffer(*fd, *fd_buf, IO_BUF_SIZE);
 
 	if (fprintf_bytes(bytes, *fd, "Validation Version " VERSION_1_1 "\n") < 0) {
-		err_code("Error while writing header to validation file %s", file_path);
+		err_code("Error while writing header to output file %s", file_path);
 		close_file(fd, fd_buf);
 		return false;
 	}
 
 	if (fprintf_bytes(bytes, *fd, META_PREFIX META_NAMESPACE " %s\n", escape(ns)) < 0) {
-		err_code("Error while writing meta data to validation file %s", file_path);
+		err_code("Error while writing meta data to output file %s", file_path);
 		close_file(fd, fd_buf);
 		return false;
 	}
@@ -243,7 +243,7 @@ open_dir_file(per_node_context *pnc)
 
 	if ((size_t)snprintf(file_path, sizeof file_path, "%s/%s_%05d.asb", pnc->conf->directory,
 			pnc->node_name, pnc->file_count) >= sizeof file_path) {
-		err("Validation file path too long");
+		err("Output file path too long");
 		return false;
 	}
 
@@ -780,16 +780,16 @@ scan_callback(const as_val *val, void *cont)
 	// backing up to a directory: switch backup files when reaching the file size limit
 	if (pnc->conf->directory != NULL && pnc->byte_count_file >= pnc->conf->file_limit) {
 		if (verbose) {
-			ver("Crossed %" PRIu64 " bytes, switching validation file", pnc->conf->file_limit);
+			ver("Crossed %" PRIu64 " bytes, switching output file", pnc->conf->file_limit);
 		}
 
 		if (!close_dir_file(pnc)) {
-			err("Error while closing old validation file");
+			err("Error while closing old output file");
 			return false;
 		}
 
 		if (!open_dir_file(pnc)) {
-			err("Error while opening new validation file");
+			err("Error while opening new output file");
 			return false;
 		}
 	}
@@ -807,7 +807,7 @@ scan_callback(const as_val *val, void *cont)
 	}
 
 	if (!ok) {
-		err("Error while storing record in validation file");
+		err("Error while storing record in output file");
 		return false;
 	}
 
@@ -906,7 +906,7 @@ backup_thread_func(void *cont)
 			pnc.fd = pnc.shared_fd;
 		// backing up to a directory: create the first backup file for the current job
 		} else if (pnc.conf->directory != NULL && !open_dir_file(&pnc)) {
-			err("Error while opening first validation file");
+			err("Error while opening first output file");
 			break;
 		}
 
@@ -940,7 +940,7 @@ backup_thread_func(void *cont)
 			pnc.fd = NULL;
 		// backing up to a directory: close the last backup file for the current job
 		} else if (pnc.conf->directory != NULL && !close_dir_file(&pnc)) {
-			err("Error while closing validation file");
+			err("Error while closing output file");
 			break;
 		}
 	}
@@ -1155,7 +1155,7 @@ static bool
 clean_directory(const char *dir_path, bool clear)
 {
 	if (verbose) {
-		ver("Preparing validation directory %s", dir_path);
+		ver("Preparing output directory %s", dir_path);
 	}
 
 	DIR *dir = opendir(dir_path);
@@ -1186,7 +1186,7 @@ clean_directory(const char *dir_path, bool clear)
 	while ((entry = readdir(dir)) != NULL) {
 		if (strcmp(entry->d_name + strlen(entry->d_name) - 4, ".asb") == 0) {
 			if (!clear) {
-				err("Directory %s seems to contain an existing validation; "
+				err("Directory %s seems to contain an existing output; "
 						"use -r to clear directory", dir_path);
 				closedir(dir);
 				return false;
@@ -1202,7 +1202,7 @@ clean_directory(const char *dir_path, bool clear)
 			}
 
 			if (remove(file_path) < 0) {
-				err_code("Error while removing existing validation file %s", file_path);
+				err_code("Error while removing existing output file %s", file_path);
 				closedir(dir);
 				return false;
 			}
@@ -1214,7 +1214,7 @@ clean_directory(const char *dir_path, bool clear)
 		return false;
 	}
 
-	inf("Directory %s prepared for validation", dir_path);
+	inf("Directory %s prepared for output", dir_path);
 	return true;
 }
 
@@ -1672,7 +1672,7 @@ usage(const char *name)
 	fprintf(stderr, " -Z, --usage          Display this message.\n\n");
 	fprintf(stderr, " -v, --verbose        Enable verbose output. Default: disabled\n");
 	fprintf(stderr, " -r, --remove-files\n");
-	fprintf(stderr, "                      Remove existing validation file (-o) or files (-d).\n");
+	fprintf(stderr, "                      Remove existing output file (-o) or files (-d).\n");
 	fprintf(stderr, "                      NOT allowed in configuration file\n");
 
 	fprintf(stderr, " --cdt-fix-ordered-list-unique\n");
@@ -1765,13 +1765,13 @@ usage(const char *name)
 	fprintf(stderr, "  -s, --set <set>\n");
 	fprintf(stderr, "                      The set to be validated. Default: all sets.\n");
 	fprintf(stderr, "  -d, --directory <directory>\n");
-	fprintf(stderr, "                      The directory that holds the validation files. Required, \n");
-	fprintf(stderr, "                      unless -o or -e is used.\n");
+	fprintf(stderr, "                      The directory that holds the output files. Required, \n");
+	fprintf(stderr, "                      unless -o.\n");
 	fprintf(stderr, "  -o, --output-file <file>\n");
-	fprintf(stderr, "                      Write to a single validation file. Use - for stdout.\n");
-	fprintf(stderr, "                      Required, unless -d or -e is used.\n");
+	fprintf(stderr, "                      Write to a single output file. Use - for stdout.\n");
+	fprintf(stderr, "                      Required, unless -d.\n");
 	fprintf(stderr, "  -F, --file-limit\n");
-	fprintf(stderr, "                      Rotate validation files, when their size crosses the given\n");
+	fprintf(stderr, "                      Rotate output files, when their size crosses the given\n");
 	fprintf(stderr, "                      value (in MiB) Only used when backing up to a directory.\n");
 	fprintf(stderr, "                      Default: 250.\n");
 	fprintf(stderr, "  -f, --priority <priority>\n");
@@ -1787,7 +1787,7 @@ usage(const char *name)
 	fprintf(stderr, "                      Enable more detailed logging.\n");
 	fprintf(stderr, "  -C, --compact\n");
 	fprintf(stderr, "                      Do not apply base-64 encoding to BLOBs; results in smaller\n");
-	fprintf(stderr, "                      validation files.\n");
+	fprintf(stderr, "                      output files.\n");
 	fprintf(stderr, "  -B, --bin-list <bin 1>[,<bin 2>[,...]]\n");
 	fprintf(stderr, "                      Only include the given bins in the validation.\n");
 	fprintf(stderr, "                      Default: include all bins.\n");
@@ -2484,7 +2484,7 @@ main(int32_t argc, char **argv)
 	// backup_args.shared_fd; it'll be shared by all backup threads
 	if (conf.output_file != NULL && !open_file(&backup_args.bytes, conf.output_file, conf.scan->ns,
 			0, &backup_args.shared_fd, &fd_buf)) {
-		err("Error while opening shared validation file");
+		err("Error while opening shared output file");
 		goto cleanup7;
 	}
 
@@ -2542,7 +2542,7 @@ cleanup9:
 
 cleanup8:
 	if (conf.output_file != NULL && !close_file(&backup_args.shared_fd, &fd_buf)) {
-		err("Error while closing shared validation file");
+		err("Error while closing shared output file");
 		res = EXIT_FAILURE;
 	}
 
