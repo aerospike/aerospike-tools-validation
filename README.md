@@ -1,8 +1,18 @@
 # Aerospike Validation Tools
 
+Validate complex data type (CDT) bins on the database with options to fix some errors.
+Records with detected errors are backed up unless otherwise specified. Records without CDTs or detected errors are ignored.
+By default, no fixes are applied and the fix counts should report zero in the summary printout.
+
+## Options
+
+* cdt-fix-ordered-list-unique
+
+Fix ordered lists that were not stored in order and also remove duplicate elements.
+
 ## Building
 
-Building the backup tools requires the source code of the Aerospike C client. Please clone it from GitHub.
+Building the validation tools requires the source code of the Aerospike C client. Please clone it from GitHub.
 
     git clone https://github.com/aerospike/aerospike-client-c.
 
@@ -12,17 +22,17 @@ Then build the client.
     make
     cd ..
 
-Then set the `CLIENTREPO` environment variable to point to the `aerospike-client-c` directory. The backup tools build process uses that variable to find the client code.
+Then set the `CLIENTREPO` environment variable to point to the `aerospike-client-c` directory. The validation tools build process uses that variable to find the client code.
 
     export CLIENTREPO=$(pwd)/aerospike-client-c
 
-Now clone the source code of the Aerospike backup tools from GitHub.
+Now clone the source code of the Aerospike validation tools from GitHub.
 
     git clone https://github.com/aerospike/aerospike-tools-validation
 
-Then build the backup tools and generate the Doxygen documentation.
+Then build the validation tools and generate the Doxygen documentation.
 
-    cd aerospike-tools-backup
+    cd aerospike-tools-validation
     make
     make docs
 
