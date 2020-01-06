@@ -10,6 +10,53 @@ By default, no fixes are applied and the fix counts should report zero in the su
 
 Fix ordered lists that were not stored in order and also remove duplicate elements.
 
+## Output
+
+```
+> ./bin/asvalidation -n test -o temp.bin
+
+...
+2020-01-06 22:12:28 GMT [INF] [24662] Found 10 invalid record(s) from 1 node(s), 2620 byte(s) in total (~262 B/rec)
+2020-01-06 22:12:28 GMT [INF] [24662] CDT Mode: validate
+2020-01-06 22:12:28 GMT [INF] [24662]        100 Lists
+2020-01-06 22:12:28 GMT [INF] [24662]          0   Fixed
+2020-01-06 22:12:28 GMT [INF] [24662]          0   Unfixable
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Has non-storage
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Truncated
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Corrupted
+2020-01-06 22:12:28 GMT [INF] [24662]         10   Need Fix
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Fix failed
+2020-01-06 22:12:28 GMT [INF] [24662]         10     Order
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Padding
+2020-01-06 22:12:28 GMT [INF] [24662]          0 Maps
+2020-01-06 22:12:28 GMT [INF] [24662]          0   Fixed
+2020-01-06 22:12:28 GMT [INF] [24662]          0   Unfixable
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Has duplicate keys
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Has non-storage
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Truncated
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Corrupted
+2020-01-06 22:12:28 GMT [INF] [24662]          0   Need Fix
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Fix failed
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Order
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Padding
+```
+
+* In this case, the tool was run in validation mode.
+* It found 100 lists (100 Lists) and no maps (0 Maps).
+* 10 of the lists were corrupted (10 Need Fix under Lists).
+* The reason for corruption is listed as out of order (10 Order).
+* Because it was in validation mode, no fixes were applied (0 Fixed).
+
+Other corruption reasons:
+* Has non-storage -- The bin contains an infinite or wildcard element which are not allowed as storage (unfixable).
+* Truncated -- The bin is cut off which bytes missing at the end (unfixable).
+* Has duplicate keys -- The map bin has duplicate key entries (unfixable).
+* Corrupted -- Unfixable corruption not covered by the above.
+* Order -- The bin has elements out of order. Can be fixed by reordering list or map.
+* Padding -- The bin has garbage bytes after the valid list or map. Can be fixed by truncating the extra bytes.
+
+Fixes are applied to the server and fix failed can be due to (but not limited to) the server version not supporting the operations used in the fix algorithm or network error.
+
 ## Building
 
 Building the validation tools requires the source code of the Aerospike C client. Please clone it from GitHub.
