@@ -340,9 +340,9 @@ cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
 	for (uint32_t i = 0; i < ele_count - 1; i++) {
 		uint32_t cur_off = mp.offset;
 
-		msgpack_sz(&mp);
+		msgpack_sz_rep(&mp, 2);
 
-		uint32_t start_off = mp.offset;
+		uint32_t next_off = mp.offset;
 		msgpack_in rhs = mp;
 
 		for (uint32_t j = i + 1; j < ele_count; j++) {
@@ -353,7 +353,7 @@ cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
 			}
 		}
 
-		mp.offset = start_off;
+		mp.offset = next_off;
 	}
 
 	return false;
