@@ -6,9 +6,9 @@ By default, no fixes are applied and the fix counts should report zero in the su
 
 ## Options
 
-* cdt-fix-ordered-list-unique
-
-Fix ordered lists that were not stored in order and also remove duplicate elements.
+|config|definition|
+|------|---|
+|cdt-fix-ordered-list-unique|Fix ordered lists that were not stored in order and also remove duplicate elements.|
 
 ## Output
 
