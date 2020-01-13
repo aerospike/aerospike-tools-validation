@@ -63,7 +63,6 @@ typedef struct cdt_stats_s {
 	cf_atomic32 cannot_fix;
 	cf_atomic32 cf_dupkey; // map only
 	cf_atomic32 cf_nonstorage;
-	cf_atomic32 cf_truncated;
 	cf_atomic32 cf_corrupt;
 } cdt_stats;
 
