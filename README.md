@@ -21,23 +21,21 @@ By default, no fixes are applied and the fix counts should report zero in the su
 2020-01-06 22:12:28 GMT [INF] [24662] Found 10 invalid record(s) from 1 node(s), 2620 byte(s) in total (~262 B/rec)
 2020-01-06 22:12:28 GMT [INF] [24662] CDT Mode: validate
 2020-01-06 22:12:28 GMT [INF] [24662]        100 Lists
-2020-01-06 22:12:28 GMT [INF] [24662]          0   Fixed
 2020-01-06 22:12:28 GMT [INF] [24662]          0   Unfixable
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Has non-storage
-2020-01-06 22:12:28 GMT [INF] [24662]          0     Truncated
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Corrupted
 2020-01-06 22:12:28 GMT [INF] [24662]         10   Need Fix
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Fixed
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Fix failed
 2020-01-06 22:12:28 GMT [INF] [24662]         10     Order
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Padding
 2020-01-06 22:12:28 GMT [INF] [24662]          0 Maps
-2020-01-06 22:12:28 GMT [INF] [24662]          0   Fixed
 2020-01-06 22:12:28 GMT [INF] [24662]          0   Unfixable
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Has duplicate keys
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Has non-storage
-2020-01-06 22:12:28 GMT [INF] [24662]          0     Truncated
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Corrupted
 2020-01-06 22:12:28 GMT [INF] [24662]          0   Need Fix
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Fixed
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Fix failed
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Order
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Padding
@@ -48,10 +46,10 @@ By default, no fixes are applied and the fix counts should report zero in the su
 * 10 of the lists were corrupted (10 Need Fix under Lists).
 * The reason for corruption is listed as out of order (10 Order).
 * Because it was in validation mode, no fixes were applied (0 Fixed).
+* NOTE: Numbers under a heading do not necessarily add up to the count of the line. For example, there could be (1 Need Fix) but it could have both an Order and Padding error.
 
 Other corruption reasons:
 * Has non-storage -- The bin contains an infinite or wildcard element which are not allowed as storage (unfixable).
-* Truncated -- The bin is cut off which bytes missing at the end (unfixable).
 * Has duplicate keys -- The map bin has duplicate key entries (unfixable).
 * Corrupted -- Unfixable corruption not covered by the above.
 * Order -- The bin has elements out of order. Can be fixed by reordering list or map.
