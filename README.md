@@ -6,16 +6,20 @@ By default, no fixes are applied and the fix counts should report zero in the su
 
 ## Options
 
+A minimal set of options to run this tool.
+
 |config|definition|
 |------|---|
 |--cdt-fix-ordered-list-unique|Fix ordered lists that were not stored in order and also remove duplicate elements.|
-|-n | Namespace |
+| -n | Namespace |
 | -o | Output File Name |
+| -d | Output Directory |
+| --help | Get a comprehensive list of options for tool |
 
 ## Output
 
 ```
-> ./bin/asvalidation -n test -o temp.bin
+> asvalidation -n test -o temp.bin
 
 ...
 2020-01-06 22:12:28 GMT [INF] [24662] Found 10 invalid record(s) from 1 node(s), 2620 byte(s) in total (~262 B/rec)
