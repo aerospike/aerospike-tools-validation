@@ -102,6 +102,7 @@ typedef struct {
 	uint64_t rec_count_estimate;        ///< The number of objects to be backed up. This can change
 	                                    ///  during the backup, so it's just treated as an estimate.
 	cf_atomic64 rec_count_total;        ///< The total number of records backed up so far.
+	cf_atomic64 rec_count_checked;      ///< The total number of records checked so far.
 	cf_atomic64 byte_count_total;       ///< The total number of bytes written to the backup file(s)
 	                                    ///  so far.
 	volatile uint64_t byte_count_limit; ///< The current limit for byte_count_total for throttling.
