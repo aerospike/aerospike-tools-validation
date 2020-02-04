@@ -993,7 +993,7 @@ counter_thread_func(void *cont)
 		prev_ms = now_ms;
 
 		if (conf->rec_count_estimate > 0) {
-			uint64_t now_recs = cf_atomic64_get(conf->rec_count_total);
+			uint64_t now_recs = cf_atomic64_get(conf->rec_count_checked);
 
 			int32_t percent = (int32_t)(now_recs * 100 / conf->rec_count_estimate);
 			uint64_t recs = now_recs - prev_recs;
