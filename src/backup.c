@@ -773,8 +773,8 @@ scan_callback(const as_val *val, void *cont)
 
 	per_node_context *pnc = cont;
 
-        // bump for every record, not just bad ones
 	cf_atomic64_incr(&pnc->conf->rec_count_checked);
+
 	if (! cdt_try_fix(pnc->conf->as, rec, pnc->conf)) {
 		return true;
 	}
@@ -1006,12 +1006,9 @@ counter_thread_func(void *cont)
 			prev_recs = now_recs;
 
 			// rec_count_estimate may be a little off, make sure that we only print up to 99%
-                        // Don't bother with byte-level stats
 			if (percent < 100) {
 				if (iter++ % 10 == 0) {
-					inf("%d%% complete (~%" PRIu64 " rec/s",
-							percent,
-                                                        ms == 0 ? 0 : recs * 1000 / ms);
+					inf("%d%% complete (~%" PRIu64 " rec/s)", percent, ms == 0 ? 0 : recs * 1000 / ms);
 
 					if (eta >= 0) {
 						inf("~%s remaining", eta_buff);
