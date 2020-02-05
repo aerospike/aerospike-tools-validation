@@ -1,8 +1,21 @@
-# Aerospike Validation Tools
+# Aerospike Validation Tool
 
-Validate complex data type (CDT) bins on the database with options to fix some errors.
-Records with detected errors are backed up unless otherwise specified. Records without CDTs or detected errors are ignored.
-By default, no fixes are applied and the fix counts should report zero in the summary printout.
+This tool scans all records in a namespace and validates bins with Complex Data
+Type (CDT) values, optionally attempting to repair any damage detected.
+Records with unrecoverable CDT errors are backed up in **asbackup** format if an output file is
+specified. Records without CDTs or detected errors are ignored.
+
+By default, no fixes are applied and the fix counts should report zero in
+the summary printout.  Aerospike recommends first running the validation tool without the fix
+option to assess the state of the namespace.
+
+## Usage Criteria
+
+The validation tool should be run on all namespaces that created or
+modified record bins with **Ordered List** CDTs under a pre-4.6 server
+release.  There exist edge cases in this scenario that could result in
+some CDTs becoming corrupted: the validation tool is designed to
+detect &mdash;and if possible correct&mdash; those bins.
 
 ## Options
 
