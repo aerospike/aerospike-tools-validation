@@ -660,7 +660,7 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 	pk.offset += cf->content_sz;
 
 	as_pack_uint64(&pk, AS_LIST_ORDERED); // create flags
-	as_pack_uint64(&pk, AS_LIST_WRITE_ADD_UNIQUE); // modify flags
+	as_pack_uint64(&pk, AS_LIST_WRITE_ADD_UNIQUE | AS_LIST_WRITE_NO_FAIL | AS_LIST_WRITE_PARTIAL); // modify flags
 
 	if (! as_cdt_add_packed(&pk, &ops, bin->name, AS_OPERATOR_CDT_MODIFY)) {
 		err("as_cdt_add_packed() failed");
