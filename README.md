@@ -19,20 +19,52 @@ detect &mdash;and if possible correct&mdash; those bins.
 
 ## Options
 
-A minimal set of options to run this tool.
+Following is the minimal set of options to that must be specified to run this tool:
 
-|config|definition|
-|------|---|
-|--cdt-fix-ordered-list-unique|Fix ordered lists that were not stored in order and also remove duplicate elements.|
-| -n | Namespace |
-| -o | Output File Name |
-| -d | Output Directory |
-| --help | Get a comprehensive list of options for tool |
+|Option|Default|Description|
+|------|-------|-----------|
+|`--cdt-fix-ordered-list-unique`| disabled | Fix ordered lists that were not stored in order and also remove duplicate elements.|
+| `-n <namespace>` | - | Namespace to validate **Mandatory.** |
+| `-o <path>` | - | The single file to write corrupted records to. `-` means `stdout`. **Mandatory, unless `'--directory'` is given.** |
+| `-d <path>` | - | Directory to store the output files. If the directory does not exist, it will be created before use. **Mandatory, unless `'-o'` is given.** |
+| `--help` | Get a comprehensive list of options for the tool. |
+
+The following additional options are available.  Options starting with '--' follow Linux **getopt_long(3)** syntax: a parameter may be specified either as '`--opt=param`' or '`--opt param`'.
+
+| Option | Default | Description|
+|--------|---------|------------|
+| `-h <host1>[:<tlsname1>][:<port1>][,...]` | 127.0.0.1 | The host that acts as the entry point to the cluster. Any of the cluster nodes can be specified. The remaining cluster nodes will be automatically discovered.|
+| `-p <port>` or `--port <port>` | 3000 | Port to connect to. |
+| `-U <user>` or `--user <user>` | - | User name with read permission. **Mandatory if the server has security enabled.** |
+| `-P<password>` or `--password`| - | Password to authenticate the given user. The first form passes the password on the command line. The second form prompts for the password. |
+| `-l <host1>[:<tlsname1>]:<port1>[,...]` or `--node-list <addr1>[:<tlsname1>]:<port1>[,...]` | All nodes | While `--host`/`--port` will make `asvalidation` automatically discover and validate all cluster nodes, `--node-list` can be used to validate only a subset of the cluster nodes. |
+| `-w <nodes>` or `--parallel <nodes>` | 10 | Maximal number of nodes to validate in parallel. asvalidate will concurrently scan up to the requested number of nodes. **Setting this number too high may result in client overload.** |
+| `--tls-enable` | disabled | Indicates a TLS connection should be used. |
+| `--services-alternate` | false | Use to connect to [`alternate-access-address`](/docs/reference/configuration/#alternate-access-address) when the cluster nodes publish IP addresses through [`access-address`](/docs/reference/configuration/#access-address) which are not accessible over WAN and alternate IP addresses accessible over WAN through [`alternate-access-address`](/docs/reference/configuration/#alternate-access-address). |
+
+The following TLS-specific options are available if the `--tls-enable` option is specified.
+
+| Option | Description |
+|--------|---------|
+|<img width=250/>|<img width=100/>|
+| `--tls-cafile <path>` | Path to a trusted CA certificate file. |
+| `--tls-capath <path>` | Path to a directory of trusted CA certificates. |
+| `--tls-protocols <protocols>` | Set the TLS protocol selection criteria. This format is the same as Apache's `SSLprotocol` documented at [https://httpd.apache.org/docs/current/mod/mod_ssl.html#sslprotocol](https://httpd.apache.org/docs/current/mod/mod_ssl.html#sslprotocol) . If not specified `asvalidation` will use '`-all +TLSv1.2`' if it supports TLSv1.2, otherwise it will use '`-all +TLSv1`'. |
+| `--tls-cipher-suite <suite>` | Set the TLS cipher selection criteria. The format is the same as OpenSSL's Cipher List Format documented at [https://www.openssl.org/docs/manmaster/man1/ciphers.html](https://www.openssl.org/docs/manmaster/man1/ciphers.html). |
+| `--tls-keyfile <path>` | Path to the key for mutual authentication (if Aerospike Cluster is supporting it). |
+| `--tls-keyfile-password <password>` | Password to load protected tls-keyfile. It can be one of the following:<br/>1) Environment varaible: 'env:&lt;VAR&gt;'<br/>2) File: 'file:&lt;PATH&gt;'<br/>3) String: 'PASSWORD'<br/>User will be prompted on command line if '`--tls-keyfile-password`' is specified and no password is given. |
+| `--tls-certfile  <path>` | Path to the chain file for mutual authentication (if Aerospike Cluster is supporting it). |
+| `--tls-cert-blacklist <path>` | Path to a certificate blacklist file. The file should contain one line for each blacklisted certificate. Each line starts with the certificate serial number expressed in hexadecimal. Each entry may optionally specify the issuer name of the certificate (serial numbers are only required to be unique per issuer). Example: `'867EC87482B2 /C=US/ST=CA/O=Acme/OU=Engineering/CN=TestChainCA'` |
+| `--tls-crl-check` | Enable CRL checking for leaf certificate. An error occurs if a valid CRL file cannot be found in the directory specified with '`--tls_capath`'. |
+| `--tls-crl-checkall` | Enable CRL checking for entire certificate chain. An error occurs if a valid CRL file cannot be found in the directory specified with '`--tls_capath`'. |
+
 
 ## Output
 
+Following is an example of typical output expected when `asvalidate` is run on a namespace.
+
 ```
-> asvalidation -n test -o temp.bin
+$ asvalidation -n test -o temp.bin
 
 ...
 2020-01-06 22:12:28 GMT [INF] [24662] Found 10 invalid record(s) from 1 node(s), 2620 byte(s) in total (~262 B/rec)
@@ -66,6 +98,7 @@ A minimal set of options to run this tool.
 * NOTE: Numbers under a heading do not necessarily add up to the count of the line. For example, there could be (1 Need Fix) but it could have both an Order and Padding error.
 
 Other corruption reasons:
+
 * Has non-storage -- The bin contains an infinite or wildcard element which are not allowed as storage (unfixable).
 * Has duplicate keys -- The map bin has duplicate key entries (unfixable).
 * Corrupted -- Unfixable corruption not covered by the above.
