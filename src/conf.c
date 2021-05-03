@@ -589,16 +589,7 @@ config_backup(toml_table_t *conftab, backup_config *c, const char *instance,
 			} else {
 				status = false;
 			}
-
-		// } else if (! strcasecmp("priority", name)) {
-
-			// status = config_int(curtab, name, (void*)&i_val);
-			// if (i_val > 0 && i_val <= 3) {
-			// 	c->scan->priority = (uint32_t)i_val;
-			// } else {
-			// 	status = false;
-			// }
-
+			
 		} else if (! strcasecmp("records-per-second", name)) {
 
 			status = config_int(curtab, name, (void*)&c->policy->records_per_second);
