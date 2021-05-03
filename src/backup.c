@@ -1871,7 +1871,6 @@ main(int32_t argc, char **argv)
 		{ "tls-certfile", required_argument, NULL, TLS_OPT_CERT_FILE },
 
 		// asbackup section in config file
-		{ "no-cluster-change", no_argument, NULL, 'c' },
 		{ "compact", no_argument, NULL, 'C' },
 		{ "parallel", required_argument, NULL, 'w' },
 		{ "bin-list", required_argument, NULL, 'B' },
@@ -1885,7 +1884,6 @@ main(int32_t argc, char **argv)
 		{ "node-list", required_argument, NULL, 'l' },
 		{ "modified-after", required_argument, NULL, 'a' },
 		{ "modified-before", required_argument, NULL, 'b' },
-		{ "priority", required_argument, NULL, 'f' },
 		{ "records-per-second", required_argument, NULL, 'L' },
 		{ "machine", required_argument, NULL, 'm' },
 		{ "nice", required_argument, NULL, 'N' },
@@ -2055,15 +2053,6 @@ main(int32_t argc, char **argv)
 			conf.remove_files = true;
 			break;
 
-		// case 'f':
-		// 	if (!better_atoi(optarg, &tmp) || tmp > 3) {
-		// 		err("Invalid priority value %s", optarg);
-		// 		goto cleanup1;
-		// 	}
-
-		// 	scan.priority = (uint32_t)tmp;
-		// 	break;
-
 		case 'L':
 			if (! better_atoi(optarg, &tmp)) {
 				err("Invalid records-per-second value %s", optarg);
@@ -2072,10 +2061,6 @@ main(int32_t argc, char **argv)
 
 			policy.records_per_second = (uint32_t)tmp;
 			break;
-
-		// case 'c':
-		// 	policy.fail_on_cluster_change = true;
-		// 	break;
 
 		case 'v':
 			as_log_set_level(AS_LOG_LEVEL_TRACE);
