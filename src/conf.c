@@ -603,11 +603,13 @@ config_backup(toml_table_t *conftab, backup_config *c, const char *instance,
 
 			status = config_int(curtab, name, (void*)&c->policy->records_per_second);
 
-		}else if (! strcasecmp("no-cluster-change", name)) {
-			status = config_bool(curtab, name,
-					(void*)&c->policy->fail_on_cluster_change);
+		}
+		// else if (! strcasecmp("no-cluster-change", name)) {
+		// 	status = config_bool(curtab, name,
+		// 			(void*)&c->policy->fail_on_cluster_change);
 
-		} else if (! strcasecmp("no-bins", name)) {
+		// } 
+		else if (! strcasecmp("no-bins", name)) {
 			status = config_bool(curtab, name, (void*)&c->scan->no_bins);
 
 		} else if (! strcasecmp("compact", name)) {

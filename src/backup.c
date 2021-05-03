@@ -2060,14 +2060,14 @@ main(int32_t argc, char **argv)
 			conf.remove_files = true;
 			break;
 
-		case 'f':
-			if (!better_atoi(optarg, &tmp) || tmp > 3) {
-				err("Invalid priority value %s", optarg);
-				goto cleanup1;
-			}
+		// case 'f':
+		// 	if (!better_atoi(optarg, &tmp) || tmp > 3) {
+		// 		err("Invalid priority value %s", optarg);
+		// 		goto cleanup1;
+		// 	}
 
-			scan.priority = (uint32_t)tmp;
-			break;
+		// 	scan.priority = (uint32_t)tmp;
+		// 	break;
 
 		case 'L':
 			if (! better_atoi(optarg, &tmp)) {
@@ -2078,9 +2078,9 @@ main(int32_t argc, char **argv)
 			policy.records_per_second = (uint32_t)tmp;
 			break;
 
-		case 'c':
-			policy.fail_on_cluster_change = true;
-			break;
+		// case 'c':
+		// 	policy.fail_on_cluster_change = true;
+		// 	break;
 
 		case 'v':
 			as_log_set_level(AS_LOG_LEVEL_TRACE);
@@ -2335,8 +2335,8 @@ main(int32_t argc, char **argv)
 		as_scan_predexp_add(&scan, as_predexp_and(2));
 	}
 
-	inf("Starting %d%% validation of %s (namespace: %s, set: %s, bins: %s, after: %s, before: %s) to %s",
-			scan.percent, conf.host, scan.ns, scan.set[0] == 0 ? "[all]" : scan.set,
+	inf("Starting validation of %s (namespace: %s, set: %s, bins: %s, after: %s, before: %s) to %s",
+			conf.host, scan.ns, scan.set[0] == 0 ? "[all]" : scan.set,
 			conf.bin_list == NULL ? "[all]" : conf.bin_list, after, before,
 			conf.output_file != NULL ?
 					strcmp(conf.output_file, "-") == 0 ? "[stdout]" : conf.output_file :
