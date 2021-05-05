@@ -1916,7 +1916,7 @@ main(int32_t argc, char **argv)
 
 	// option string should start with '-' to avoid argv permutation
 	// we need same argv sequence in third check to support space separated optional argument value
-	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rf:cvxCB:w:l:%:m:eN:RIuVZa:b:L:",
+	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
 					options, 0)) != -1) {
 
 		switch (opt) {
@@ -1940,7 +1940,7 @@ main(int32_t argc, char **argv)
 	// Reset to optind (internal variable)
 	// to parse all options again
 	optind = 0;
-	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rf:cvxCB:w:l:%:m:eN:RIuVZa:b:L:",
+	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
 			options, 0)) != -1) {
 		switch (opt) {
 
@@ -1984,7 +1984,7 @@ main(int32_t argc, char **argv)
 	// Reset to optind (internal variable)
 	// to parse all options again
 	optind = 0;
-	while ((opt = getopt_long(argc, argv, "h:Sp:A:U:P::n:s:d:o:F:rf:cvxCB:w:l:%:m:eN:RIuVZa:b:L:",
+	while ((opt = getopt_long(argc, argv, "h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
 			options, 0)) != -1) {
 		switch (opt) {
 		case 'h':
