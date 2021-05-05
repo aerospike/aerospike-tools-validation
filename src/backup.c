@@ -1768,15 +1768,10 @@ usage(const char *name)
 	fprintf(stderr, "                      Rotate output files, when their size crosses the given\n");
 	fprintf(stderr, "                      value (in MiB) Only used when backing up to a directory.\n");
 	fprintf(stderr, "                      Default: 250.\n");
-	fprintf(stderr, "  -f, --priority <priority>\n");
-	fprintf(stderr, "                      The scan priority. 0 (auto), 1 (low), 2 (medium), 3 (high).\n");
-	fprintf(stderr, "                      Default: 0.\n");
 	fprintf(stderr, "  -L, --records-per-second <rps>\n");
 	fprintf(stderr, "                      Limit returned records per second (rps) rate for each server.\n");
 	fprintf(stderr, "                      Do not apply rps limit if records-per-second is zero.\n");
 	fprintf(stderr, "                      Default: 0.\n");
-	fprintf(stderr, "  -c, --no-cluster-change\n");
-	fprintf(stderr, "                      Abort, if the cluster configuration changes during validation.\n");
 	fprintf(stderr, "  -v, --verbose\n");
 	fprintf(stderr, "                      Enable more detailed logging.\n");
 	fprintf(stderr, "  -C, --compact\n");
@@ -1876,7 +1871,6 @@ main(int32_t argc, char **argv)
 		{ "tls-certfile", required_argument, NULL, TLS_OPT_CERT_FILE },
 
 		// asbackup section in config file
-		{ "no-cluster-change", no_argument, NULL, 'c' },
 		{ "compact", no_argument, NULL, 'C' },
 		{ "parallel", required_argument, NULL, 'w' },
 		{ "bin-list", required_argument, NULL, 'B' },
@@ -1890,7 +1884,6 @@ main(int32_t argc, char **argv)
 		{ "node-list", required_argument, NULL, 'l' },
 		{ "modified-after", required_argument, NULL, 'a' },
 		{ "modified-before", required_argument, NULL, 'b' },
-		{ "priority", required_argument, NULL, 'f' },
 		{ "records-per-second", required_argument, NULL, 'L' },
 		{ "machine", required_argument, NULL, 'm' },
 		{ "nice", required_argument, NULL, 'N' },
@@ -1923,7 +1916,7 @@ main(int32_t argc, char **argv)
 
 	// option string should start with '-' to avoid argv permutation
 	// we need same argv sequence in third check to support space separated optional argument value
-	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rf:cvxCB:w:l:%:m:eN:RIuVZa:b:L:",
+	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
 					options, 0)) != -1) {
 
 		switch (opt) {
@@ -1947,7 +1940,7 @@ main(int32_t argc, char **argv)
 	// Reset to optind (internal variable)
 	// to parse all options again
 	optind = 0;
-	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rf:cvxCB:w:l:%:m:eN:RIuVZa:b:L:",
+	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
 			options, 0)) != -1) {
 		switch (opt) {
 
@@ -1991,7 +1984,7 @@ main(int32_t argc, char **argv)
 	// Reset to optind (internal variable)
 	// to parse all options again
 	optind = 0;
-	while ((opt = getopt_long(argc, argv, "h:Sp:A:U:P::n:s:d:o:F:rf:cvxCB:w:l:%:m:eN:RIuVZa:b:L:",
+	while ((opt = getopt_long(argc, argv, "h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
 			options, 0)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -2060,15 +2053,6 @@ main(int32_t argc, char **argv)
 			conf.remove_files = true;
 			break;
 
-		case 'f':
-			if (!better_atoi(optarg, &tmp) || tmp > 3) {
-				err("Invalid priority value %s", optarg);
-				goto cleanup1;
-			}
-
-			scan.priority = (uint32_t)tmp;
-			break;
-
 		case 'L':
 			if (! better_atoi(optarg, &tmp)) {
 				err("Invalid records-per-second value %s", optarg);
@@ -2076,10 +2060,6 @@ main(int32_t argc, char **argv)
 			}
 
 			policy.records_per_second = (uint32_t)tmp;
-			break;
-
-		case 'c':
-			policy.fail_on_cluster_change = true;
 			break;
 
 		case 'v':
@@ -2335,8 +2315,8 @@ main(int32_t argc, char **argv)
 		as_scan_predexp_add(&scan, as_predexp_and(2));
 	}
 
-	inf("Starting %d%% validation of %s (namespace: %s, set: %s, bins: %s, after: %s, before: %s) to %s",
-			scan.percent, conf.host, scan.ns, scan.set[0] == 0 ? "[all]" : scan.set,
+	inf("Starting validation of %s (namespace: %s, set: %s, bins: %s, after: %s, before: %s) to %s",
+			conf.host, scan.ns, scan.set[0] == 0 ? "[all]" : scan.set,
 			conf.bin_list == NULL ? "[all]" : conf.bin_list, after, before,
 			conf.output_file != NULL ?
 					strcmp(conf.output_file, "-") == 0 ? "[stdout]" : conf.output_file :
