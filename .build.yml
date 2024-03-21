@@ -7,21 +7,24 @@ dependency:
 
 container:
   - base:
-      - docker.qe.aerospike.com/build/aerospike-tools:amazonlinux-2023
-      - docker.qe.aerospike.com/build/aerospike-tools:centos-6
-      - docker.qe.aerospike.com/build/aerospike-tools:centos-7
-      - docker.qe.aerospike.com/build/aerospike-tools:centos-8
-      - docker.qe.aerospike.com/build/aerospike-tools:centos-9
-      - docker.qe.aerospike.com/build/aerospike-tools:debian-8
-      - docker.qe.aerospike.com/build/aerospike-tools:debian-9
-      - docker.qe.aerospike.com/build/aerospike-tools:debian-10
-      - docker.qe.aerospike.com/build/aerospike-tools:debian-11
-      - docker.qe.aerospike.com/build/aerospike-tools:debian-12
-      - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-14.04
-      - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-16.04
-      - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-18.04
-      - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-20.04
-      - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-22.04
+
+      - docker.qe.aerospike.com/build/aerospike-server:arm-centos-7
+      - docker.qe.aerospike.com/build/aerospike-server:arm-rhel-8
+      - docker.qe.aerospike.com/build/aerospike-server:arm-rhel-9
+      - docker.qe.aerospike.com/build/aerospike-server:arm-debian-11
+      - docker.qe.aerospike.com/build/aerospike-server:arm-debian-12
+      - docker.qe.aerospike.com/build/aerospike-server:arm-ubuntu-20.04
+      - docker.qe.aerospike.com/build/aerospike-server:arm-ubuntu-22.04
+      - docker.qe.aerospike.com/build/aerospike-server:arm-amazonlinux-2023
+
+      - docker.qe.aerospike.com/build/aerospike-server:x86-centos-7
+      - docker.qe.aerospike.com/build/aerospike-server:x86-rhel-8
+      - docker.qe.aerospike.com/build/aerospike-server:x86-rhel-9
+      - docker.qe.aerospike.com/build/aerospike-server:x86-debian-11
+      - docker.qe.aerospike.com/build/aerospike-server:x86-debian-12
+      - docker.qe.aerospike.com/build/aerospike-server:x86-ubuntu-20.04
+      - docker.qe.aerospike.com/build/aerospike-server:x86-ubuntu-22.04
+      - docker.qe.aerospike.com/build/aerospike-server:x86-amazonlinux-2023
 
 build:
   - name: default
