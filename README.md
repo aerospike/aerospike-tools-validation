@@ -83,6 +83,7 @@ Building the validation tools requires the source code of the Aerospike C client
 Then build the client.
 
     cd aerospike-client-c
+    git checkout 5.2.8
     make
     cd ..
 
