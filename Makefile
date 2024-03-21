@@ -26,7 +26,7 @@ ifndef CLIENTREPO
 $(error Please set the CLIENTREPO environment variable)
 endif
 
-OS := $(shell uname -s)
+OS := $(shell build/os_version)
 ARCH := $(shell uname -m)
 PLATFORM := $(OS)-$(ARCH)
 VERSION := $(shell git describe 2>/dev/null; if [ $${?} != 0 ]; then echo 'unknown'; fi)
