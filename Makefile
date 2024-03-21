@@ -121,6 +121,15 @@ clean:
 ragel:
 	ragel $(DIR_SRC)/spec.rl
 
+.PHONY: rpm
+rpm:
+	$(MAKE) -f pkg/Makefile.rpm
+
+.PHONY: deb
+deb:
+	$(MAKE) -f pkg/Makefile.deb
+
+
 $(DIR_DOCS): $(INCS) $(SRCS) README.md
 	if [ ! -d $(DIR_DOCS) ]; then mkdir $(DIR_DOCS); fi
 	doxygen doxyfile

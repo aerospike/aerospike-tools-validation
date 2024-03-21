@@ -30,5 +30,7 @@ build:
     script:
       - make -C client
       - make
+      - make $PKG
     artifact:
       - bin/*
+      - target/packages/*
