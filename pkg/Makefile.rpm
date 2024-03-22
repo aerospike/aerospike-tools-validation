@@ -1,0 +1,41 @@
+# Build asvalidation rpm distribution.
+
+export RPM_SOURCE_ROOT = $(shell echo `pwd`/dist)
+export RPM_BUILD_ROOT = $(RPM_SOURCE_ROOT)/BUILD
+export CL_BASE = $(RPM_BUILD_ROOT)/opt/aerospike
+export ETC_BASE = $(RPM_BUILD_ROOT)/etc/aerospike
+
+MANIFEST_DIR = manifest/TEMP
+REV = $(shell build/version | sed 's/-/_/g')
+OS = $(shell build/os_version)
+ARCH = $(shell uname -m)
+
+.PHONY: default
+default: dist
+	mkdir -p target/packages
+	mkdir -p $(RPM_BUILD_ROOT)
+	mkdir -p $(RPM_SOURCE_ROOT)/RPMS/$(ARCH)
+	mkdir -p $(RPM_BUILD_ROOT)/usr/bin
+
+	sed 's/@VERSION@/'$(REV)'/g' <pkg/rpm/asvalidation.spec >pkg/asvalidation_v.spec
+	sed -i 's/@RELEASE@/'$(OS)'/g' pkg/asvalidation_v.spec
+	sed -i 's/@ARCH@/'$(ARCH)'/g' pkg/asvalidation_v.spec
+
+	rpmbuild -bb -vv --define "dist .$(OS)" --buildroot $(RPM_BUILD_ROOT) pkg/asvalidation_v.spec
+	find $(RPM_SOURCE_ROOT)/RPMS -type f -exec mv {} target/packages \;
+	rm -rf pkg/asvalidation_v.spec dist
+
+distclean:
+	rm -rf $(RPM_BUILD_ROOT)
+	rm -rf target/packages/*.rpm
+
+.PHONY: dist
+dist:
+
+	mkdir -p $(CL_BASE)
+	mkdir -p $(CL_BASE)/bin
+
+	# asvalidation
+	install -m 755 bin/asvalidation $(CL_BASE)/bin/asvalidation
+
+print-% : ; @echo $($*)

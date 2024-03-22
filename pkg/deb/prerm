@@ -1,0 +1,13 @@
+#!/bin/sh
+
+set -e
+
+case "$1" in
+  remove)
+  
+  echo Removing /opt/aerospike/bin/asvalidation 
+  rm -f /opt/aerospike/bin/asvalidation
+  ;;
+esac
+
+exit 0

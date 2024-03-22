@@ -7,6 +7,7 @@ dependency:
 
 container:
   - base:
+
       - docker.qe.aerospike.com/build/aerospike-tools:amazonlinux-2023
       - docker.qe.aerospike.com/build/aerospike-tools:centos-6
       - docker.qe.aerospike.com/build/aerospike-tools:centos-7
@@ -30,5 +31,7 @@ build:
     script:
       - make -C client
       - make
+      - make $PKG
     artifact:
       - bin/*
+      - target/packages/*
