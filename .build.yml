@@ -8,21 +8,13 @@ dependency:
 container:
   - base:
 
-      - docker.qe.aerospike.com/build/aerospike-tools:amazonlinux-2023
-      - docker.qe.aerospike.com/build/aerospike-tools:centos-6
       - docker.qe.aerospike.com/build/aerospike-tools:centos-7
       - docker.qe.aerospike.com/build/aerospike-tools:centos-8
-      - docker.qe.aerospike.com/build/aerospike-tools:centos-9
       - docker.qe.aerospike.com/build/aerospike-tools:debian-8
       - docker.qe.aerospike.com/build/aerospike-tools:debian-9
       - docker.qe.aerospike.com/build/aerospike-tools:debian-10
-      - docker.qe.aerospike.com/build/aerospike-tools:debian-11
-      - docker.qe.aerospike.com/build/aerospike-tools:debian-12
-      - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-14.04
-      - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-16.04
       - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-18.04
       - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-20.04
-      - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-22.04
 
 build:
   - name: default
