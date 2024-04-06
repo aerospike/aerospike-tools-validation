@@ -248,8 +248,8 @@ open_dir_file(per_node_context *pnc)
 	}
 
 	uint64_t rec_count_estimate = pnc->conf->rec_count_estimate;
-	uint64_t rec_count_total = cf_atomic64_get(pnc->conf->rec_count_total);
-	uint64_t byte_count_total = cf_atomic64_get(pnc->conf->byte_count_total);
+	uint64_t rec_count_total = atomic_load(pnc->conf->rec_count_total);
+	uint64_t byte_count_total = atomic_load(pnc->conf->byte_count_total);
 	uint64_t rec_remain = rec_count_total > rec_count_estimate ? 0 :
 			rec_count_estimate - rec_count_total;
 	uint64_t rec_size = rec_count_total == 0 ? 0 : byte_count_total / rec_count_total;
@@ -261,8 +261,8 @@ open_dir_file(per_node_context *pnc)
 
 	uint64_t bytes = 0;
 
-	if (!open_file(&bytes, file_path, pnc->conf->scan->ns, rec_remain * rec_size,
-			&pnc->fd, &pnc->fd_buf)) {
+	if (!open_file(&bytes, file_path, pnc->conf->scan->ns,
+			rec_remain * rec_size, &pnc->fd, &pnc->fd_buf)) {
 		return false;
 	}
 
@@ -271,7 +271,7 @@ open_dir_file(per_node_context *pnc)
 
 	pnc->byte_count_file = bytes;
 	pnc->byte_count_node += bytes;
-	cf_atomic64_add(&pnc->conf->byte_count_total, (int64_t)bytes);
+	as_aaf_seq(&pnc->conf->byte_count_total, (int64_t)bytes);
 	return true;
 }
 
@@ -293,13 +293,13 @@ static void
 cdt_check_set_cannotfix(const msgpack_in *mp, cdt_fix *cf, cdt_stats *stat)
 {
 	cf->need_log = true;
-	cf_atomic32_incr(&stat->cannot_fix);
+	atomic_incr(&stat->cannot_fix);
 
 	if (mp->has_nonstorage) {
-		cf_atomic32_incr(&stat->cf_nonstorage);
+		atomic_incr(&stat->cf_nonstorage);
 	}
 	else {
-		cf_atomic32_incr(&stat->cf_corrupt);
+		atomic_incr(&stat->cf_corrupt);
 	}
 }
 
@@ -309,15 +309,15 @@ cdt_check_sz(msgpack_in *mp, uint32_t sz, cdt_fix *cf, cdt_stats *stat)
 {
 	if (mp->offset < sz) {
 		cf->need_log = true;
-		cf_atomic32_incr(&stat->need_fix);
-		cf_atomic32_incr(&stat->nf_padding);
+		atomic_incr(&stat->need_fix);
+		atomic_incr(&stat->nf_padding);
 		cf->nf_padding = sz - mp->offset;
 		return true;
 	}
 
 	if (mp->offset > sz) {
-		cf_atomic32_incr(&stat->cannot_fix);
-		cf_atomic32_incr(&stat->cf_corrupt);
+		atomic_incr(&stat->cannot_fix);
+		atomic_incr(&stat->cf_corrupt);
 	}
 
 	return false;
@@ -373,8 +373,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 	if (! msgpack_get_map_ele_count(&mp, &ele_count)) {
 		cf->need_log = true;
-		cf_atomic32_incr(&bc->cdt_map.cannot_fix);
-		cf_atomic32_incr(&bc->cdt_map.cf_corrupt);
+		atomic_incr(&bc->cdt_map.cannot_fix);
+		atomic_incr(&bc->cdt_map.cf_corrupt);
 		return false;
 	}
 
@@ -390,8 +390,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 	if (msgpack_peek_is_ext(&mp)) {
 		if (! msgpack_get_ext(&mp, &ext) || msgpack_sz(&mp) == 0) {
 			cf->need_log = true;
-			cf_atomic32_incr(&bc->cdt_map.cannot_fix);
-			cf_atomic32_incr(&bc->cdt_map.cf_corrupt);
+			atomic_incr(&bc->cdt_map.cannot_fix);
+			atomic_incr(&bc->cdt_map.cf_corrupt);
 			return false; // corrupted ext
 		}
 	}
@@ -408,8 +408,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 		if (cdt_map_dup_key_check(ele_count, cf->contents, cf->content_sz)) {
 			cf->need_log = true;
-			cf_atomic32_incr(&bc->cdt_map.cannot_fix);
-			cf_atomic32_incr(&bc->cdt_map.cf_dupkey);
+			atomic_incr(&bc->cdt_map.cannot_fix);
+			atomic_incr(&bc->cdt_map.cf_dupkey);
 			return false;
 		}
 
@@ -455,16 +455,16 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 				if (cdt_map_dup_key_check(ele_count, cf->contents,
 						cf->content_sz)) {
 					cf->need_log = true;
-					cf_atomic32_incr(&bc->cdt_map.cannot_fix);
-					cf_atomic32_incr(&bc->cdt_map.cf_dupkey);
+					atomic_incr(&bc->cdt_map.cannot_fix);
+					atomic_incr(&bc->cdt_map.cf_dupkey);
 					return false;
 				}
 
-				cf_atomic32_incr(&bc->cdt_map.need_fix);
-				cf_atomic32_incr(&bc->cdt_map.nf_order);
+				atomic_incr(&bc->cdt_map.need_fix);
+				atomic_incr(&bc->cdt_map.nf_order);
 
 				if (mp.offset != sz) {
-					cf_atomic32_incr(&bc->cdt_map.nf_padding);
+					atomic_incr(&bc->cdt_map.nf_padding);
 					cf->nf_padding = sz - mp.offset;
 				}
 
@@ -472,8 +472,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			}
 
 			cf->need_log = true;
-			cf_atomic32_incr(&bc->cdt_map.cannot_fix);
-			cf_atomic32_incr(&bc->cdt_map.cf_corrupt);
+			atomic_incr(&bc->cdt_map.cannot_fix);
+			atomic_incr(&bc->cdt_map.cf_corrupt);
 			return false;
 		}
 	}
@@ -496,8 +496,8 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 	if (! msgpack_get_list_ele_count(&mp, &ele_count)) {
 		cf->need_log = true;
-		cf_atomic32_incr(&bc->cdt_list.cannot_fix);
-		cf_atomic32_incr(&bc->cdt_list.cf_corrupt);
+		atomic_incr(&bc->cdt_list.cannot_fix);
+		atomic_incr(&bc->cdt_list.cf_corrupt);
 		return false;
 	}
 
@@ -513,8 +513,8 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 	if (msgpack_peek_is_ext(&mp)) {
 		if (! msgpack_get_ext(&mp, &ext)) {
 			cf->need_log = true;
-			cf_atomic32_incr(&bc->cdt_list.cannot_fix);
-			cf_atomic32_incr(&bc->cdt_list.cf_corrupt);
+			atomic_incr(&bc->cdt_list.cannot_fix);
+			atomic_incr(&bc->cdt_list.cf_corrupt);
 			return false; // corrupted ext
 		}
 	}
@@ -562,27 +562,27 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			cf->nf_list_order = true;
 
 			if (mp.offset <= sz) {
-				cf_atomic32_incr(&bc->cdt_list.need_fix);
-				cf_atomic32_incr(&bc->cdt_list.nf_order);
+				atomic_incr(&bc->cdt_list.need_fix);
+				atomic_incr(&bc->cdt_list.nf_order);
 
 				if (mp.offset != sz) {
-					cf_atomic32_incr(&bc->cdt_list.nf_padding);
+					atomic_incr(&bc->cdt_list.nf_padding);
 					cf->nf_padding = sz - mp.offset;
 				}
 
 				return true; // fix order and maybe padding
 			}
 
-			cf_atomic32_incr(&bc->cdt_list.cannot_fix);
-			cf_atomic32_incr(&bc->cdt_list.cf_corrupt);
+			atomic_incr(&bc->cdt_list.cannot_fix);
+			atomic_incr(&bc->cdt_list.cf_corrupt);
 			return false;
 		}
 	}
 
 	if (mp.has_nonstorage) {
 		cf->need_log = true;
-		cf_atomic32_incr(&bc->cdt_list.cannot_fix);
-		cf_atomic32_incr(&bc->cdt_list.cf_nonstorage);
+		atomic_incr(&bc->cdt_list.cannot_fix);
+		atomic_incr(&bc->cdt_list.cf_nonstorage);
 		return false;
 	}
 
@@ -592,15 +592,14 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 // Return true to need fix.
 static bool
-cdt_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
-		backup_config *bc)
+cdt_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, backup_config *bc)
 {
 	switch (msgpack_buf_peek_type(buf, sz)) {
 	case MSGPACK_TYPE_LIST:
-		cf_atomic32_incr(&bc->cdt_list.count);
+		atomic_incr(&bc->cdt_list.count);
 		return cdt_list_need_fix(buf, sz, cf, bc);
 	case MSGPACK_TYPE_MAP:
-		cf_atomic32_incr(&bc->cdt_map.count);
+		atomic_incr(&bc->cdt_map.count);
 		return cdt_map_need_fix(buf, sz, cf, bc);
 	default:
 		break;
@@ -609,8 +608,7 @@ cdt_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 	return false;
 }
 
-extern bool
-as_cdt_add_packed(as_packer* pk, as_operations* ops, const as_bin_name name, as_operator op_type);
+extern bool as_cdt_add_packed(as_packer* pk, as_operations* ops, const as_bin_name name, as_operator op_type);
 
 static void
 cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
@@ -625,11 +623,11 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 		if (aerospike_key_put(as, &error, NULL, &rec->key, rec) !=
 				AEROSPIKE_OK) {
 			err("aerospike_key_put() returned %d - %s", error.code, error.message);
-			cf_atomic32_incr(&stat->nf_failed);
+			atomic_incr(&stat->nf_failed);
 			return;
 		}
 
-		cf_atomic32_incr(&stat->fixed);
+		atomic_incr(&stat->fixed);
 		return;
 	}
 
@@ -660,12 +658,13 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 	pk.offset += cf->content_sz;
 
 	as_pack_uint64(&pk, AS_LIST_ORDERED); // create flags
-	as_pack_uint64(&pk, AS_LIST_WRITE_ADD_UNIQUE | AS_LIST_WRITE_NO_FAIL | AS_LIST_WRITE_PARTIAL); // modify flags
+	as_pack_uint64(&pk, AS_LIST_WRITE_ADD_UNIQUE | AS_LIST_WRITE_NO_FAIL |
+			AS_LIST_WRITE_PARTIAL); // modify flags
 
 	if (! as_cdt_add_packed(&pk, &ops, bin->name, AS_OPERATOR_CDT_MODIFY)) {
 		err("as_cdt_add_packed() failed");
 		as_operations_destroy(&ops);
-		cf_atomic32_incr(&stat->nf_failed);
+		atomic_incr(&stat->nf_failed);
 		return;
 	}
 
@@ -675,12 +674,12 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 			AEROSPIKE_OK) {
 		err("as_testlist_op() returned %d - %s", error.code, error.message);
 		as_operations_destroy(&ops);
-		cf_atomic32_incr(&stat->nf_failed);
+		atomic_incr(&stat->nf_failed);
 		return;
 	}
 
 	as_operations_destroy(&ops);
-	cf_atomic32_incr(&stat->fixed);
+	atomic_incr(&stat->fixed);
 }
 
 // Return true to log the record.
@@ -773,14 +772,15 @@ scan_callback(const as_val *val, void *cont)
 
 	per_node_context *pnc = cont;
 
-	cf_atomic64_incr(&pnc->conf->rec_count_checked);
+	atomic_incr(&pnc->conf->rec_count_checked);
 
 	if (! cdt_try_fix(pnc->conf->as, rec, pnc->conf)) {
 		return true;
 	}
 
 	// backing up to a directory: switch backup files when reaching the file size limit
-	if (pnc->conf->directory != NULL && pnc->byte_count_file >= pnc->conf->file_limit) {
+	if (pnc->conf->directory != NULL &&
+			pnc->byte_count_file >= pnc->conf->file_limit) {
 		if (verbose) {
 			ver("Crossed %" PRIu64 " bytes, switching output file", pnc->conf->file_limit);
 		}
@@ -802,7 +802,8 @@ scan_callback(const as_val *val, void *cont)
 	}
 
 	uint64_t bytes = 0;
-	bool ok = pnc->conf->encoder->put_record(&bytes, pnc->fd, pnc->conf->compact, rec);
+	bool ok = pnc->conf->encoder->put_record(&bytes, pnc->fd,
+			pnc->conf->compact, rec);
 
 	if (pnc->conf->output_file != NULL) {
 		safe_unlock();
@@ -815,17 +816,17 @@ scan_callback(const as_val *val, void *cont)
 
 	++pnc->rec_count_file;
 	++pnc->rec_count_node;
-	cf_atomic64_incr(&pnc->conf->rec_count_total);
+	atomic_incr(&pnc->conf->rec_count_total);
 
 	pnc->byte_count_file += bytes;
 	pnc->byte_count_node += bytes;
-	cf_atomic64_add(&pnc->conf->byte_count_total, (int64_t)bytes);
+	as_aaf_seq(&pnc->conf->byte_count_total, (int64_t)bytes);
 
 	if (pnc->conf->bandwidth > 0) {
 		safe_lock();
 
-		while (cf_atomic64_get(pnc->conf->byte_count_total) >= pnc->conf->byte_count_limit &&
-				!stop) {
+		while (atomic_load(pnc->conf->byte_count_total) >=
+				pnc->conf->byte_count_limit && ! stop) {
 			safe_wait(&bandwidth_cond);
 		}
 
@@ -914,8 +915,9 @@ backup_thread_func(void *cont)
 
 		as_error ae;
 
-		if (aerospike_scan_node(pnc.conf->as, &ae, pnc.conf->policy, pnc.conf->scan,
-				pnc.node_name, scan_callback, &pnc) != AEROSPIKE_OK) {
+		if (aerospike_scan_node(pnc.conf->as, &ae, pnc.conf->policy,
+				pnc.conf->scan, pnc.node_name, scan_callback, &pnc) !=
+						AEROSPIKE_OK) {
 			if (ae.code == AEROSPIKE_OK) {
 				inf("Node scan for %s aborted", pnc.node_name);
 			} else {
@@ -983,7 +985,7 @@ counter_thread_func(void *cont)
 	backup_config *conf = args->conf;
 	uint32_t iter = 0;
 	cf_clock prev_ms = cf_getms();
-	uint64_t prev_recs = cf_atomic64_get(conf->rec_count_checked);
+	uint64_t prev_recs = atomic_load(conf->rec_count_checked);
 
 	while (true) {
 		sleep(1);
@@ -993,7 +995,7 @@ counter_thread_func(void *cont)
 		prev_ms = now_ms;
 
 		if (conf->rec_count_estimate > 0) {
-			uint64_t now_recs = cf_atomic64_get(conf->rec_count_checked);
+			uint64_t now_recs = atomic_load(conf->rec_count_checked);
 
 			int32_t percent = (int32_t)(now_recs * 100 / conf->rec_count_estimate);
 			uint64_t recs = now_recs - prev_recs;
@@ -1047,8 +1049,8 @@ counter_thread_func(void *cont)
 		}
 	}
 
-	uint64_t records = cf_atomic64_get(conf->rec_count_total);
-	uint64_t bytes = cf_atomic64_get(conf->byte_count_total);
+	uint64_t records = atomic_load(conf->rec_count_total);
+	uint64_t bytes = atomic_load(conf->byte_count_total);
 	inf("Found %" PRIu64 " invalid record(s) from %u node(s), "
 			"%" PRIu64 " byte(s) in total (~%" PRIu64 " B/rec)", records,
 			args->n_node_names, bytes, records == 0 ? 0 : bytes / records);
@@ -1323,7 +1325,8 @@ parse_node_list(char *node_list, node_spec **node_specs, uint32_t *n_node_specs)
 			memcpy(tls_name, node_str, length);
 			tls_name[length] = '\0';
 
-			(*node_specs)[i].tls_name_str = safe_malloc(sizeof(char) * (length + 1));
+			(*node_specs)[i].tls_name_str =
+					safe_malloc(sizeof(char) * (length + 1));
 			memcpy((*node_specs)[i].tls_name_str, tls_name, length + 1);
 
 			colon = new_colon;
@@ -1423,8 +1426,9 @@ ns_count_callback(void *context_, const char *key, const char *value)
 		return true;
 	}
 
-	if (strcmp(key, "repl-factor") == 0 || strcmp(key, "effective_replication_factor") == 0) {
-		if (!better_atoi(value, &tmp) || tmp == 0 || tmp > 100) {
+	if (strcmp(key, "repl-factor") == 0 ||
+			strcmp(key, "effective_replication_factor") == 0) {
+		if (! better_atoi(value, &tmp) || tmp == 0 || tmp > 100) {
 			err("Invalid replication factor %s", value);
 			return false;
 		}
@@ -1526,7 +1530,8 @@ cleanup0:
 ///
 static bool
 get_object_count(aerospike *as, const char *namespace, const char *set,
-		char (*node_names)[][AS_NODE_NAME_SIZE], uint32_t n_node_names, uint64_t *obj_count)
+		char (*node_names)[][AS_NODE_NAME_SIZE], uint32_t n_node_names,
+		uint64_t *obj_count)
 {
 	if (verbose) {
 		ver("Getting cluster object count");
@@ -1545,7 +1550,8 @@ get_object_count(aerospike *as, const char *namespace, const char *set,
 			ver("Getting object count for node %s", (*node_names)[i]);
 		}
 
-		if (!get_info(as, value, (*node_names)[i], &ns_context, ns_count_callback, true)) {
+		if (! get_info(as, value, (*node_names)[i], &ns_context,
+				ns_count_callback, true)) {
 			err("Error while getting namespace object count for node %s", (*node_names)[i]);
 			return false;
 		}
@@ -1562,7 +1568,8 @@ get_object_count(aerospike *as, const char *namespace, const char *set,
 		} else {
 			set_count_context set_context = { namespace, set, 0 };
 
-			if (!get_info(as, "sets", (*node_names)[i], &set_context, set_count_callback, false)) {
+			if (! get_info(as, "sets", (*node_names)[i], &set_context,
+					set_count_callback, false)) {
 				err("Error while getting set object count for node %s", (*node_names)[i]);
 				return false;
 			}
@@ -1791,16 +1798,6 @@ usage(const char *name)
 	fprintf(stderr,"                       typically a FIFO.\n");
 	fprintf(stderr, "  -N, --nice <bandwidth>\n");
 	fprintf(stderr, "                      The limit for write storage bandwidth in MiB/s.\n");
-	fprintf(stderr, "  -a, --modified-after <YYYY-MM-DD_HH:MM:SS>\n");
-	fprintf(stderr, "                      Perform an incremental validation; only include records \n");
-	fprintf(stderr, "                      that changed after the given date and time. The system's \n");
-	fprintf(stderr, "                      local timezone applies. If only HH:MM:SS is specified, then\n");
-	fprintf(stderr, "                      today's date is assumed as the date. If only YYYY-MM-DD is \n");
-	fprintf(stderr, "                      specified, then 00:00:00 (midnight) is assumed as the time.\n");
-	fprintf(stderr, "  -b, --modified-before <YYYY-MM-DD_HH:MM:SS>\n");
-	fprintf(stderr, "                      Only include records that last changed before the given\n");
-	fprintf(stderr, "                      date and time. May combined with --modified-after to specify\n");
-	fprintf(stderr, "                      a range.\n\n");
 
 	fprintf(stderr, "\n\n");
 	fprintf(stderr, "Default configuration files are read from the following files in the given order:\n");
@@ -1825,7 +1822,6 @@ int32_t
 main(int32_t argc, char **argv)
 {
 	static struct option options[] = {
-
 		// Non Config file options
 		{ "verbose", no_argument, NULL, 'v' },
 		{ "usage", no_argument, NULL, 'Z' },
@@ -1882,8 +1878,6 @@ main(int32_t argc, char **argv)
 		{ "file-limit", required_argument, NULL, 'F' },
 		{ "remove-files", no_argument, NULL, 'r' },
 		{ "node-list", required_argument, NULL, 'l' },
-		{ "modified-after", required_argument, NULL, 'a' },
-		{ "modified-before", required_argument, NULL, 'b' },
 		{ "records-per-second", required_argument, NULL, 'L' },
 		{ "machine", required_argument, NULL, 'm' },
 		{ "nice", required_argument, NULL, 'N' },
@@ -1943,7 +1937,6 @@ main(int32_t argc, char **argv)
 	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
 			options, 0)) != -1) {
 		switch (opt) {
-
 			case CONFIG_FILE_OPT_FILE:
 				config_fname = optarg;
 				break;
@@ -1960,17 +1953,16 @@ main(int32_t argc, char **argv)
 				config_fname = optarg;
 				read_only_conf_file = true;
 				break;
-
 		}
 	}
 
 	if (read_conf_files) {
 		if (read_only_conf_file) {
-			if (! config_from_file(&conf, instance, config_fname, 0, true)) {
+			if (! config_from_file(&conf, instance, config_fname, 0)) {
 				return false;
 			}
 		} else {
-			if (! config_from_files(&conf, instance, config_fname, true)) {
+			if (! config_from_files(&conf, instance, config_fname)) {
 				return false;
 			}
 		}
@@ -2008,7 +2000,8 @@ main(int32_t argc, char **argv)
 			if (optarg) {
 				conf.password = optarg;
 			} else {
-				if (optind < argc && NULL != argv[optind] && '-' != argv[optind][0] ) {
+				if (optind < argc && NULL != argv[optind] &&
+						'-' != argv[optind][0] ) {
 					// space separated argument value
 					conf.password = argv[optind++];
 				} else {
@@ -2149,7 +2142,8 @@ main(int32_t argc, char **argv)
 			if (optarg) {
 				conf.tls.keyfile_pw = safe_strdup(optarg);
 			} else {
-				if (optind < argc && NULL != argv[optind] && '-' != argv[optind][0] ) {
+				if (optind < argc && NULL != argv[optind] &&
+						'-' != argv[optind][0] ) {
 					// space separated argument value
 					conf.tls.keyfile_pw = safe_strdup(argv[optind++]);
 				} else {
@@ -2163,22 +2157,6 @@ main(int32_t argc, char **argv)
 
 		case TLS_OPT_CERT_FILE:
 			conf.tls.certfile = safe_strdup(optarg);
-			break;
-
-		case 'a':
-			if (!parse_date_time(optarg, &conf.mod_after)) {
-				err("Invalid date and time string %s", optarg);
-				goto cleanup1;
-			}
-
-			break;
-
-		case 'b':
-			if (!parse_date_time(optarg, &conf.mod_before)) {
-				err("Invalid date and time string %s", optarg);
-				goto cleanup1;
-			}
-
 			break;
 
 		case CONFIG_FILE_OPT_FILE:
@@ -2256,7 +2234,8 @@ main(int32_t argc, char **argv)
 			free(dup);
 		}
 
-		if (node_specs[0].tls_name_str != NULL && strcmp(node_specs[0].tls_name_str, "")) {
+		if (node_specs[0].tls_name_str != NULL &&
+				strcmp(node_specs[0].tls_name_str, "")) {
 			strcat(conf.host, ":");
 			strcat(conf.host, node_specs[0].tls_name_str);
 
@@ -2270,58 +2249,13 @@ main(int32_t argc, char **argv)
 	signal(SIGINT, sig_hand);
 	signal(SIGTERM, sig_hand);
 
-	const char *before;
-	const char *after;
-	char before_buff[100];
-	char after_buff[100];
-
-	if (conf.mod_before > 0 && conf.mod_after > 0) {
-		as_scan_predexp_inita(&scan, 7);
-	} else if (conf.mod_before > 0 || conf.mod_after > 0) {
-		as_scan_predexp_inita(&scan, 3);
-	}
-
-	if (conf.mod_before > 0) {
-		as_scan_predexp_add(&scan, as_predexp_rec_last_update());
-		as_scan_predexp_add(&scan, as_predexp_integer_value(conf.mod_before));
-		as_scan_predexp_add(&scan, as_predexp_integer_less());
-
-		if (!format_date_time(conf.mod_before, before_buff, sizeof before_buff)) {
-			err("Error while formatting modified-since time");
-			goto cleanup2;
-		}
-
-		before = before_buff;
-	} else {
-		before = "[none]";
-	}
-
-	if (conf.mod_after > 0) {
-		as_scan_predexp_add(&scan, as_predexp_rec_last_update());
-		as_scan_predexp_add(&scan, as_predexp_integer_value(conf.mod_after));
-		as_scan_predexp_add(&scan, as_predexp_integer_greatereq());
-
-		if (!format_date_time(conf.mod_after, after_buff, sizeof after_buff)) {
-			err("Error while formatting modified-since time");
-			goto cleanup2;
-		}
-
-		after = after_buff;
-	} else {
-		after = "[none]";
-	}
-
-	if (conf.mod_before > 0 && conf.mod_after > 0) {
-		as_scan_predexp_add(&scan, as_predexp_and(2));
-	}
-
-	inf("Starting validation of %s (namespace: %s, set: %s, bins: %s, after: %s, before: %s) to %s",
+	inf("Starting validation of %s (namespace: %s, set: %s, bins: %s) to %s",
 			conf.host, scan.ns, scan.set[0] == 0 ? "[all]" : scan.set,
-			conf.bin_list == NULL ? "[all]" : conf.bin_list, after, before,
+			conf.bin_list == NULL ? "[all]" : conf.bin_list,
 			conf.output_file != NULL ?
-					strcmp(conf.output_file, "-") == 0 ? "[stdout]" : conf.output_file :
-					conf.directory != NULL ?
-							conf.directory : "[none]");
+					strcmp(conf.output_file, "-") == 0 ?
+							"[stdout]" : conf.output_file :
+							conf.directory != NULL ? conf.directory : "[none]");
 
 	if (conf.bin_list != NULL && !init_scan_bins(conf.bin_list, &scan)) {
 		err("Error while setting scan bin list");
@@ -2345,7 +2279,8 @@ main(int32_t argc, char **argv)
 		goto cleanup3;
 	}
 
-	if (conf.auth_mode && ! as_auth_mode_from_string(&as_conf.auth_mode, conf.auth_mode)) {
+	if (conf.auth_mode && ! as_auth_mode_from_string(&as_conf.auth_mode,
+			conf.auth_mode)) {
 		err("Invalid authentication mode %s. Allowed values are INTERNAL / EXTERNAL / EXTERNAL_INSECURE\n",
 				conf.auth_mode);
 		goto cleanup2;
@@ -2392,7 +2327,9 @@ main(int32_t argc, char **argv)
 
 	char (*node_names)[][AS_NODE_NAME_SIZE] = NULL;
 	uint32_t n_node_names;
-	get_node_names(as.cluster, node_specs, n_node_specs, &node_names, &n_node_names);
+
+	get_node_names(as.cluster, node_specs, n_node_specs, &node_names,
+			&n_node_names);
 
 	if (n_node_specs > 0 && n_node_specs != n_node_names) {
 		err("Invalid node list. Duplicate nodes? Nodes from different clusters?");
@@ -2400,13 +2337,14 @@ main(int32_t argc, char **argv)
 	}
 
 	inf("Processing %u node(s)", n_node_names);
-	cf_atomic64_set(&conf.rec_count_total, 0);
-	cf_atomic64_set(&conf.byte_count_total, 0);
-	cf_atomic64_set(&conf.rec_count_checked, 0);
+	as_store_seq(&conf.rec_count_total, 0);
+	as_store_seq(&conf.byte_count_total, 0);
+	as_store_seq(&conf.rec_count_checked, 0);
 	conf.byte_count_limit = conf.bandwidth;
 	uint64_t rec_count_estimate;
 
-	if (!get_object_count(&as, scan.ns, scan.set, node_names, n_node_names, &rec_count_estimate)) {
+	if (!get_object_count(&as, scan.ns, scan.set, node_names, n_node_names,
+			&rec_count_estimate)) {
 		err("Error while counting cluster objects");
 		goto cleanup5;
 	}
@@ -2415,11 +2353,13 @@ main(int32_t argc, char **argv)
 
 	inf("Namespace contains %" PRIu64 " record(s)", conf.rec_count_estimate);
 
-	if (conf.directory != NULL && !clean_directory(conf.directory, conf.remove_files)) {
+	if (conf.directory != NULL && !clean_directory(conf.directory,
+			conf.remove_files)) {
 		goto cleanup5;
 	}
 
-	if (conf.output_file != NULL && !clean_output_file(conf.output_file, conf.remove_files)) {
+	if (conf.output_file != NULL && !clean_output_file(conf.output_file,
+			conf.remove_files)) {
 		goto cleanup5;
 	}
 
@@ -2434,7 +2374,8 @@ main(int32_t argc, char **argv)
 		ver("Creating counter thread");
 	}
 
-	if (pthread_create(&counter_thread, NULL, counter_thread_func, &counter_args) != 0) {
+	if (pthread_create(&counter_thread, NULL, counter_thread_func,
+			&counter_args) != 0) {
 		err_code("Error while creating counter thread");
 		goto cleanup5;
 	}
@@ -2457,8 +2398,9 @@ main(int32_t argc, char **argv)
 
 	// backing up to a single backup file: open the file now and store the file descriptor in
 	// backup_args.shared_fd; it'll be shared by all backup threads
-	if (conf.output_file != NULL && !open_file(&backup_args.bytes, conf.output_file, conf.scan->ns,
-			0, &backup_args.shared_fd, &fd_buf)) {
+	if (conf.output_file != NULL && !open_file(&backup_args.bytes,
+			conf.output_file, conf.scan->ns, 0, &backup_args.shared_fd,
+			&fd_buf)) {
 		err("Error while opening shared output file");
 		goto cleanup7;
 	}
@@ -2483,7 +2425,8 @@ main(int32_t argc, char **argv)
 	}
 
 	for (uint32_t i = 0; i < n_threads; ++i) {
-		if (pthread_create(&backup_threads[i], NULL, backup_thread_func, job_queue) != 0) {
+		if (pthread_create(&backup_threads[i], NULL, backup_thread_func,
+				job_queue) != 0) {
 			err_code("Error while creating validation thread");
 			goto cleanup9;
 		}
@@ -2516,7 +2459,8 @@ cleanup9:
 	}
 
 cleanup8:
-	if (conf.output_file != NULL && !close_file(&backup_args.shared_fd, &fd_buf)) {
+	if (conf.output_file != NULL && !close_file(&backup_args.shared_fd,
+			&fd_buf)) {
 		err("Error while closing shared output file");
 		res = EXIT_FAILURE;
 	}
@@ -2619,8 +2563,6 @@ config_default(backup_config *conf)
 	conf->remove_files = false;
 	conf->bin_list = NULL;
 	conf->node_list = NULL;
-	conf->mod_after = 0;
-	conf->mod_before = 0;
 	conf->directory = NULL;
 	conf->output_file = NULL;
 	conf->compact = false;

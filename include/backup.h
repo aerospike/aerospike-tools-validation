@@ -24,6 +24,8 @@
 
 #pragma once
 
+#include <stdint.h>
+
 #include <shared.h>
 
 #define DEFAULT_FILE_LIMIT 250                      ///< By default, start a new backup file when
@@ -52,18 +54,18 @@ typedef struct {
 } backup_encoder;
 
 typedef struct cdt_stats_s {
-	cf_atomic32 count;
-	cf_atomic32 fixed;
+	uint32_t count;
+	uint32_t fixed;
 
-	cf_atomic32 need_fix;
-	cf_atomic32 nf_failed;
-	cf_atomic32 nf_order;
-	cf_atomic32 nf_padding;
+	uint32_t need_fix;
+	uint32_t nf_failed;
+	uint32_t nf_order;
+	uint32_t nf_padding;
 
-	cf_atomic32 cannot_fix;
-	cf_atomic32 cf_dupkey; // map only
-	cf_atomic32 cf_nonstorage;
-	cf_atomic32 cf_corrupt;
+	uint32_t cannot_fix;
+	uint32_t cf_dupkey; // map only
+	uint32_t cf_nonstorage;
+	uint32_t cf_corrupt;
 } cdt_stats;
 
 ///
@@ -78,8 +80,6 @@ typedef struct {
 	bool remove_files;
 	char *bin_list;
 	char *node_list;
-	int64_t mod_after;
-	int64_t mod_before;
 
 	as_config_tls tls;
 
@@ -101,9 +101,9 @@ typedef struct {
 	                                    ///  a backup file.
 	uint64_t rec_count_estimate;        ///< The number of objects to be backed up. This can change
 	                                    ///  during the backup, so it's just treated as an estimate.
-	cf_atomic64 rec_count_total;        ///< The total number of records backed up so far.
-	cf_atomic64 rec_count_checked;      ///< The total number of records checked so far.
-	cf_atomic64 byte_count_total;       ///< The total number of bytes written to the backup file(s)
+	uint64_t rec_count_total;        ///< The total number of records backed up so far.
+	uint64_t rec_count_checked;      ///< The total number of records checked so far.
+	uint64_t byte_count_total;       ///< The total number of bytes written to the backup file(s)
 	                                    ///  so far.
 	volatile uint64_t byte_count_limit; ///< The current limit for byte_count_total for throttling.
 	                                    ///  This is periodically increased by the counter thread to

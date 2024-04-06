@@ -26,9 +26,9 @@
 
 #pragma GCC diagnostic ignored "-Wconversion"
 #pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 
 #include <citrusleaf/alloc.h>
-#include <citrusleaf/cf_atomic.h>
 #include <citrusleaf/cf_b64.h>
 #include <citrusleaf/cf_clock.h>
 
@@ -45,7 +45,6 @@
 #include <aerospike/as_nil.h>
 #include <aerospike/as_node.h>
 #include <aerospike/as_policy.h>
-#include <aerospike/as_predexp.h>
 #include <aerospike/as_record.h>
 #include <aerospike/as_scan.h>
 
@@ -164,3 +163,6 @@ typedef struct {
 	uint32_t n_node_names;                      ///< The number of cluster nodes to be backed up.
 	FILE *mach_fd;                              ///< The file descriptor for the machine-readable
 } counter_thread_args;
+
+#define atomic_load(x) as_load_seq(&x)
+#define atomic_incr(x) as_aaf_seq(x, 1)

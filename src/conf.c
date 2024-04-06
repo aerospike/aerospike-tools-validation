@@ -31,7 +31,6 @@
 #include "toml.h"
 
 #include <backup.h>
-#include <restore.h>
 #include <enc_text.h>
 #include <utils.h>
 #include <conf.h>
@@ -70,11 +69,8 @@ static bool config_parse_file(const char *fname, toml_table_t **tab, char errbuf
 static bool config_backup_cluster(toml_table_t *conftab, backup_config *c, const char *instance, char errbuf[]);
 static bool config_backup(toml_table_t *conftab, backup_config *c, const char *instance, char errbuf[]);
 
-static bool config_restore_cluster(toml_table_t *conftab, restore_config *c, const char *instance, char errbuf[]);
-static bool config_restore(toml_table_t *conftab, restore_config *c, const char *instance, char errbuf[]);
-
-static bool config_include(toml_table_t *conftab, void *c, const char *instance, int level, bool is_backup);
-static bool config_from_dir(void *c, const char *instance, char *dirname, int level, bool is_backup);
+static bool config_include(toml_table_t *conftab, void *c, const char *instance, int level);
+static bool config_from_dir(void *c, const char *instance, char *dirname, int level);
 
 static bool password_env(const char *var, char **ptr);
 static bool password_file(const char *path, char **ptr);
@@ -84,8 +80,7 @@ static bool password_file(const char *path, char **ptr);
 //
 
 bool
-config_from_file(void *c, const char *instance, const char *fname,
-		int level, bool is_backup)
+config_from_file(void *c, const char *instance, const char *fname, int level)
 {
 	bool status = true;
 	//fprintf(stderr, "Load file %d:%s\n", level, fname);
@@ -98,21 +93,14 @@ config_from_file(void *c, const char *instance, const char *fname,
 	else if (! conftab) {
 		status = true;
 	}
-	else if (is_backup) {
-
-		if (! config_backup_cluster(conftab, (backup_config*) c, instance, errbuf)) {
+	else {
+		if (! config_backup_cluster(conftab, (backup_config*) c, instance,
+				errbuf)) {
 			status = false;
-		} else if (! config_backup(conftab, (backup_config*)c, instance, errbuf)) {
+		} else if (! config_backup(conftab, (backup_config*)c, instance,
+				errbuf)) {
 			status = false;
-		} else if (! config_include(conftab, c, instance, level, is_backup)) {
-			status = false;
-		}
-	} else {
-		if (! config_restore_cluster(conftab, (restore_config*)c, instance, errbuf)) {
-			status = false;
-		} else if (! config_restore(conftab, (restore_config*)c, instance, errbuf)) {
-			status = false;
-		} else if (! config_include(conftab, c, instance, level, is_backup)) {
+		} else if (! config_include(conftab, c, instance, level)) {
 			status = false;
 		}
 	}
@@ -127,25 +115,24 @@ config_from_file(void *c, const char *instance, const char *fname,
 }
 
 bool
-config_from_files(void *c, const char *instance,
-		const char *cmd_config_fname, bool is_backup)
+config_from_files(void *c, const char *instance, const char *cmd_config_fname)
 {
 	// Load /etc/aerospike/astools.conf
-	if (! config_from_file(c, instance, "/etc/aerospike/astools.conf", 0,
-				is_backup)) {
+	if (! config_from_file(c, instance, "/etc/aerospike/astools.conf", 0)) {
 		return false;
 	}
 
 	// Load $HOME/.aerospike/astools.conf
 	char user_config_fname[128];
 	snprintf(user_config_fname, 127, "%s/%s", getenv("HOME"), BACKUP_CONFIG_FILE);
-	if (! config_from_file(c, instance, user_config_fname, 0, is_backup)) {
+
+	if (! config_from_file(c, instance, user_config_fname, 0)) {
 		return false;
 	}
 
 	// Load user passed conf file
 	if (cmd_config_fname) {
-		if (! config_from_file(c, instance, cmd_config_fname, 0, is_backup)) {
+		if (! config_from_file(c, instance, cmd_config_fname, 0)) {
 			return false;
 		}
 	}
@@ -219,99 +206,6 @@ config_bool(toml_table_t *curtab, const char *name, void *ptr)
 	}
 	return false;
 }
-
-static bool
-config_restore_cluster(toml_table_t *conftab, restore_config *c, const char *instance,
-		char errbuf[])
-{
-	// Defaults to "cluster" section in case present.
-	toml_table_t *curtab = toml_table_in(conftab, "cluster");
-
-	char cluster[256] = {"cluster"};
-	if (instance) {
-		snprintf(cluster, 255, "cluster_%s", instance);
-		// No override for cluster section.
-		curtab = toml_table_in(conftab, cluster);
-	}
-
-	if (! curtab) {
-		return true;
-	}
-
-	const char *name;
-
-	for (uint8_t k = 0; 0 != (name = toml_key_in(curtab, k)); k++) {
-
-		bool status;
-
-		if (! strcasecmp("host", name)) {
-			status = config_str(curtab, name, (void*)&c->host);
-
-		} else if (! strcasecmp("services-alternate",  name)) {
-			status = config_bool(curtab, name,
-					(void*)&c->use_services_alternate);
-
-		} else if (! strcasecmp("port", name)) {
-			// TODO make limits check for int for all int
-			status = config_int(curtab, name, (void*)&c->port);
-
-		} else if (! strcasecmp("user", name)) {
-			status = config_str(curtab, name, (void*)&c->user);
-
-		} else if (! strcasecmp("password", name)) {
-			status = config_str(curtab, name, (void*)&c->password);
-		
-		} else if (! strcasecmp("auth", name)) {
-			status = config_str(curtab, name, &c->auth_mode);
-
-		} else if (! strcasecmp("tls-enable", name)) {
-			status = config_bool(curtab, name, (void*)&c->tls.enable);
-
-		} else if (! strcasecmp("tls-protocols", name)) {
-			status = config_str(curtab, name, (void*)&c->tls.protocols);
-
-		} else if (! strcasecmp("tls-cipher-suite", name)) {
-			status = config_str(curtab, name, (void*)&c->tls.cipher_suite);
-
-		} else if (! strcasecmp("tls-crl-check", name)) {
-			status = config_bool(curtab, name, (void*)&c->tls.crl_check);
-
-		} else if (! strcasecmp("tls-crl-check-all", name)) {
-			status = config_bool(curtab, name, (void*)&c->tls.crl_check_all);
-
-		} else if (! strcasecmp("tls-keyfile", name)) {
-			status = config_str(curtab, name, (void*)&c->tls.keyfile);
-
-		} else if (! strcasecmp("tls-keyfile-password", name)) {
-			status = config_str(curtab, name, (void*)&c->tls.keyfile_pw);
-
-		} else if (! strcasecmp("tls-cafile", name)) {
-			status = config_str(curtab, name, (void*)&c->tls.cafile);
-
-		} else if (! strcasecmp("tls-capath", name)) {
-			status = config_str(curtab, name, (void*)&c->tls.capath);
-
-		} else if (! strcasecmp("tls-certfile", name)) {
-			status = config_str(curtab, name, (void*)&c->tls.certfile);
-
-		} else if (! strcasecmp("tls-cert-blacklist", name)) {
-			status = config_str(curtab, name, (void*)&c->tls.cert_blacklist);
-
-		} else {
-			snprintf(errbuf, ERR_BUF_SIZE, "Unknown parameter `%s` in `%s` section.\n", name,
-					cluster);
-			return false;
-		}
-
-		if (! status) {
-			snprintf(errbuf, ERR_BUF_SIZE, "Invalid parameter value for `%s` in `%s` section.\n",
-					name, cluster);
-			return false;
-		}
-	}
-	return true;
-}
-
 
 static bool
 config_backup_cluster(toml_table_t *conftab, backup_config *c, const char *instance,
@@ -406,8 +300,7 @@ config_backup_cluster(toml_table_t *conftab, backup_config *c, const char *insta
 }
 
 static bool
-config_from_dir(void *c, const char *instance, char *dirname,
-		int level, bool is_backup)
+config_from_dir(void *c, const char *instance, char *dirname, int level)
 {
 	DIR *dp;
 	struct dirent *entry;
@@ -431,13 +324,13 @@ config_from_dir(void *c, const char *instance, char *dirname,
 		lstat(path, &statbuf);
 
 		if (S_ISDIR(statbuf.st_mode)) {
-			if (! config_from_dir(c, instance, path, level, is_backup)) {
+			if (! config_from_dir(c, instance, path, level)) {
 				// ignore file loading error inside include directory
 				fprintf(stderr, "Skipped .....\n");
 			}
 
 		} else if (S_ISREG(statbuf.st_mode)) {
-			if (! config_from_file(c, instance, path, level, is_backup)) {
+			if (! config_from_file(c, instance, path, level)) {
 				// ignore file loading error inside include directory
 				fprintf(stderr, "Skipped .....\n");
 			}
@@ -449,8 +342,7 @@ config_from_dir(void *c, const char *instance, char *dirname,
 }
 
 static bool
-config_include(toml_table_t *conftab, void *c, const char *instance,
-		int level, bool is_backup)
+config_include(toml_table_t *conftab, void *c, const char *instance, int level)
 {
 	if (level > 3) {
 		fprintf(stderr, "include max recursion level %d", level);
@@ -473,7 +365,7 @@ config_include(toml_table_t *conftab, void *c, const char *instance,
 			status = config_str(curtab, name, (void*)&fname);
 
 			if (status) {
-				if (! config_from_file(c, instance, fname, level + 1, is_backup)) {
+				if (! config_from_file(c, instance, fname, level + 1)) {
 					free(fname);
 					return false;
 				}
@@ -484,7 +376,7 @@ config_include(toml_table_t *conftab, void *c, const char *instance,
 			char *dirname;
 			status = config_str(curtab, name, (void*)&dirname);
 			if (status) {
-				if (! config_from_dir(c, instance, dirname, level + 1, is_backup)) {
+				if (! config_from_dir(c, instance, dirname, level + 1)) {
 					free(dirname);
 					return false;
 				}
@@ -636,106 +528,6 @@ config_backup(toml_table_t *conftab, backup_config *c, const char *instance,
 		if (! status) {
 			snprintf(errbuf, ERR_BUF_SIZE, "Invalid parameter value for `%s` in `%s` section\n",
 					name, asbackup);
-			return false;
-		}
-	}
-	return true;
-}
-
-static bool
-config_restore(toml_table_t *conftab, restore_config *c, const char *instance,
-		char errbuf[])
-{
-	// Defaults to "asrestore" section in case present.
-	toml_table_t *curtab = toml_table_in(conftab, "ascorrection");
-
-	char asrestore[256] = {"ascorrection"};
-	if (instance) {
-		snprintf(asrestore, 255, "ascorrection_%s", instance);
-		// override if it exists otherwise use
-		// default section
-		if (toml_table_in(conftab, asrestore)) {
-			curtab = toml_table_in(conftab, asrestore);
-		}
-	}
-
-	if (! curtab) {
-		return true;
-	}
-
-	const char *name;
-	const char *value;
-
-	int64_t i_val = 0;
-
-	for (uint8_t k = 0; 0 != (name = toml_key_in(curtab, k)); k++) {
-
-		value = toml_raw_in(curtab, name);
-		if (!value) {
-			continue;
-		}
-		bool status;
-
-		if (! strcasecmp("namespace", name)) {
-			// TODO limit check of namespace size
-			status = config_str(curtab, name, (void*)&c->ns_list);
-
-		} else if (! strcasecmp("directory", name)) {
-			status = config_str(curtab, name, (void*)&c->directory);
-
-		} else if (! strcasecmp("input-file", name)) {
-			status = config_str(curtab, name, (void*)&c->input_file);
-
-		} else if (! strcasecmp("threads", name)) {
-
-			status = config_int(curtab, name, (void*)&i_val);
-			if (i_val >= 1 && i_val <= MAX_THREADS) {
-				c->threads = (uint32_t)i_val;
-			} else {
-				status = false;
-			}
-
-		} else if (! strcasecmp("machine", name)) {
-			status = config_str(curtab, name, (void*)&c->machine);
-
-		} else if (! strcasecmp("bin-list", name)) {
-			status = config_str(curtab, name, (void*)&c->bin_list);
-
-		} else if (! strcasecmp("set-list", name)) {
-			status = config_str(curtab, name, (void*)&c->set_list);
-
-		} else if (! strcasecmp("unique", name)) {
-			status = config_bool(curtab, name, (void*)&c->unique);
-
-		} else if (! strcasecmp("ignore-record-error", name)) {
-			status = config_bool(curtab, name, (void*)&c->ignore_rec_error);
-
-		} else if (! strcasecmp("replace", name)) {
-			status = config_bool(curtab, name, (void*)&c->replace);
-
-		} else if (! strcasecmp("no-generation", name)) {
-			status = config_bool(curtab, name, (void*)&c->no_generation);
-
-		} else if (! strcasecmp("nice-list", name)) {
-			status = config_str(curtab, name, (void*)&c->nice_list);
-
-		} else if (! strcasecmp("timeout", name)) {
-			status = config_int(curtab, name, (void*)&i_val);
-			if (i_val >= 0) {
-				c->timeout = (uint32_t)i_val;
-			} else {
-				status = false;
-			}
-
-		} else {
-			fprintf(stderr, "Unknown parameter `%s` in `%s` section\n", name,
-					asrestore);
-			return false;
-		}
-
-		if (! status) {
-			snprintf(errbuf, ERR_BUF_SIZE, "Invalid parameter value for `%s` in `%s` section\n",
-					name, asrestore);
 			return false;
 		}
 	}
