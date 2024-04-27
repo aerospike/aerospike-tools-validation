@@ -289,6 +289,182 @@ typedef struct cdt_fix_s {
 	bool need_log;
 } cdt_fix;
 
+static bool
+map_is_key(const uint8_t *buf, uint32_t buf_sz)
+{
+	msgpack_in mp = {
+			.buf = (uint8_t *)buf,
+			.buf_sz = buf_sz
+	};
+
+	msgpack_type type = msgpack_peek_type(&mp);
+
+	switch (type) {
+	case MSGPACK_TYPE_NEGINT:
+	case MSGPACK_TYPE_INT:
+	case MSGPACK_TYPE_STRING:
+		return true;
+	case MSGPACK_TYPE_BYTES: {
+		uint32_t len;
+		const uint8_t *b = msgpack_get_bin(&mp, &len);
+
+		if (b == NULL || len == 0 || *b != AS_BYTES_BLOB) {
+			break;
+		}
+
+		return true;
+	}
+	default:
+		break;
+	}
+
+	return false;
+}
+
+static const uint8_t *
+check_map_keys_internal(const uint8_t *b, const uint8_t *end)
+{
+	bool has_nonstorage = false;
+	bool not_compact = false;
+	uint32_t count = 1;
+	msgpack_type type;
+	const uint8_t *next_b = msgpack_parse(b, end, &count, &type,
+			&has_nonstorage, &not_compact);
+	uint32_t ele_count = count - 1;
+
+	if (next_b == NULL) {
+		return NULL;
+	}
+
+	switch (type) {
+	case MSGPACK_TYPE_LIST:
+	case MSGPACK_TYPE_MAP:
+		break;
+	default:
+		return next_b;
+	}
+
+	if (ele_count == 0) {
+		return next_b;
+	}
+
+	if (msgpack_buf_peek_type(next_b, (uint32_t)(end - next_b)) ==
+			MSGPACK_TYPE_EXT) {
+		msgpack_type type2;
+		next_b = msgpack_parse(next_b, end, &count, &type2, &has_nonstorage,
+				&not_compact);
+
+		if (next_b == NULL) {
+			return NULL;
+		}
+
+		if (type == MSGPACK_TYPE_MAP) {
+			next_b = msgpack_parse(next_b, end, &count, &type2, &has_nonstorage,
+					&not_compact);
+			ele_count--;
+
+			if (next_b == NULL) {
+				return NULL;
+			}
+		}
+
+		ele_count--;
+	}
+
+	if (type == MSGPACK_TYPE_LIST) {
+		for (uint32_t i = 0; i < ele_count; i++) {
+			next_b = check_map_keys_internal(next_b, end);
+
+			if (next_b == NULL) {
+				return NULL;
+			}
+		}
+	}
+	else { // MAPs
+		ele_count /= 2;
+
+		for (uint32_t i = 0; i < ele_count; i++) {
+			if (! map_is_key(next_b, (uint32_t)(end - next_b))) {
+				return NULL;
+			}
+
+			next_b = check_map_keys_internal(next_b, end);
+
+			if (next_b == NULL) {
+				return NULL;
+			}
+
+			next_b = check_map_keys_internal(next_b, end);
+
+			if (next_b == NULL) {
+				return NULL;
+			}
+		}
+	}
+
+	return next_b;
+}
+
+// Return true to need fix.
+//static bool
+//cdt_check_map_keys_recursive(const uint8_t *buf, uint32_t sz, backup_config *bc)
+//{
+//	msgpack_type type = msgpack_buf_peek_type(buf, sz);
+//	cdt_stats *stats = NULL;
+//
+//	switch (type) {
+//	case MSGPACK_TYPE_LIST:
+//		stats = &bc->cdt_list;
+//		break;
+//	case MSGPACK_TYPE_MAP:
+//		stats = &bc->cdt_map;
+//		break;
+//	default:
+//		return false;
+//	}
+//
+//	cf_atomic32_incr(&stats->top_count);
+//
+//	if (check_map_keys_internal(buf, buf + sz, stats, 0) == NULL) {
+//		return true;
+//	}
+//
+//	return false;
+//}
+
+//// Return true to log the record.
+//static bool
+//cdt_check_map_keys(aerospike *as, as_record *rec, backup_config *bc)
+//{
+//	bool need_log = false; // log record if any bin is corrupt
+//
+//	for (int32_t i = 0; i < rec->bins.size; ++i) {
+//		as_bin *bin = &rec->bins.entries[i];
+//		as_val *val = (as_val *)bin->valuep;
+//
+//		if (val->type != AS_BYTES) {
+//			continue;
+//		}
+//
+//		as_bytes *b = (as_bytes *)val;
+//		as_bytes_type b_type = as_bytes_get_type(b);
+//
+//		if (b_type != AS_BYTES_LIST && b_type != AS_BYTES_MAP) {
+//			continue;
+//		}
+//
+//		uint8_t *buf = as_bytes_get(b);
+//		uint32_t buf_sz = as_bytes_size(b);
+//		bool check = cdt_check_map_keys_recursive(buf, buf_sz, bc);
+//
+//		if (check) {
+//			need_log = true;
+//		}
+//	}
+//
+//	return need_log;
+//}
+
 static void
 cdt_check_set_cannotfix(const msgpack_in *mp, cdt_fix *cf, cdt_stats *stat)
 {
@@ -361,8 +537,8 @@ cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
 
 // Return true for need fix.
 static bool
-cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
-		backup_config *bc)
+cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
+		bool check_map_keys)
 {
 	msgpack_in mp = {
 			.buf = buf,
@@ -373,8 +549,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 	if (! msgpack_get_map_ele_count(&mp, &ele_count)) {
 		cf->need_log = true;
-		atomic_incr(&bc->cdt_map.cannot_fix);
-		atomic_incr(&bc->cdt_map.cf_corrupt);
+		atomic_incr(&st->cannot_fix);
+		atomic_incr(&st->cf_corrupt);
 		return false;
 	}
 
@@ -382,7 +558,7 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 		cf->ele_count = ele_count;
 		cf->contents = mp.buf + mp.offset;
 		cf->content_sz = 0;
-		return cdt_check_sz(&mp, sz, cf, &bc->cdt_map);
+		return cdt_check_sz(&mp, sz, cf, st);
 	}
 
 	msgpack_ext ext;
@@ -390,8 +566,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 	if (msgpack_peek_is_ext(&mp)) {
 		if (! msgpack_get_ext(&mp, &ext) || msgpack_sz(&mp) == 0) {
 			cf->need_log = true;
-			atomic_incr(&bc->cdt_map.cannot_fix);
-			atomic_incr(&bc->cdt_map.cf_corrupt);
+			atomic_incr(&st->cannot_fix);
+			atomic_incr(&st->cf_corrupt);
 			return false; // corrupted ext
 		}
 	}
@@ -399,8 +575,41 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 		cf->ele_count = ele_count;
 		cf->contents = mp.buf + mp.offset;
 
-		if (msgpack_sz_rep(&mp, 2 * ele_count) == 0 || mp.has_nonstorage) {
-			cdt_check_set_cannotfix(&mp, cf, &bc->cdt_map);
+		if (check_map_keys) {
+			for (uint32_t i = 0; i < ele_count; i++) {
+				const uint8_t *start = mp.buf + mp.offset;
+				uint32_t sz = msgpack_sz_rep(&mp, 1);
+
+				if (sz == 0 || mp.has_nonstorage) {
+					cdt_check_set_cannotfix(&mp, cf, st);
+					return false;
+				}
+
+				if (! map_is_key(start, sz)) {
+					atomic_incr(&st->cf_invalidkey);
+					atomic_incr(&st->cf_corrupt);
+					return false;
+				}
+
+				start = mp.buf + mp.offset;
+				sz = msgpack_sz_rep(&mp, 1);
+
+				if (sz == 0 || mp.has_nonstorage) {
+					cdt_check_set_cannotfix(&mp, cf, st);
+					return false;
+				}
+
+				const uint8_t *end = mp.buf + mp.offset;
+
+				if (check_map_keys_internal(start, end) == NULL) {
+					atomic_incr(&st->cf_invalidkey);
+					atomic_incr(&st->cf_corrupt);
+					return false;
+				}
+			}
+		}
+		else if (msgpack_sz_rep(&mp, 2 * ele_count) == 0 || mp.has_nonstorage) {
+			cdt_check_set_cannotfix(&mp, cf, st);
 			return false;
 		}
 
@@ -408,12 +617,12 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 		if (cdt_map_dup_key_check(ele_count, cf->contents, cf->content_sz)) {
 			cf->need_log = true;
-			atomic_incr(&bc->cdt_map.cannot_fix);
-			atomic_incr(&bc->cdt_map.cf_dupkey);
+			atomic_incr(&st->cannot_fix);
+			atomic_incr(&st->cf_dupkey);
 			return false;
 		}
 
-		return cdt_check_sz(&mp, sz, cf, &bc->cdt_map);
+		return cdt_check_sz(&mp, sz, cf, st);
 	}
 
 	cf->ele_count = ele_count - 1;
@@ -421,22 +630,55 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 	if (cf->ele_count == 0) {
 		cf->content_sz = 0;
-		return cdt_check_sz(&mp, sz, cf, &bc->cdt_map);
+		return cdt_check_sz(&mp, sz, cf, st);
 	}
 
 	msgpack_in mp_prev = mp;
+	const uint8_t *start = mp.buf + mp.offset;
+	uint32_t ele_sz = msgpack_sz_rep(&mp, 1);
 
-	if (msgpack_sz_rep(&mp, 2) == 0 || mp.has_nonstorage) {
-		cdt_check_set_cannotfix(&mp, cf, &bc->cdt_map);
+	if (ele_sz == 0 || mp.has_nonstorage) {
+		cdt_check_set_cannotfix(&mp, cf, st);
+		return false;
+	}
+
+	if (check_map_keys && ! map_is_key(start, ele_sz)) {
+		atomic_incr(&st->cf_invalidkey);
+		atomic_incr(&st->cf_corrupt);
+		return false;
+	}
+
+	start = mp.buf + mp.offset;
+
+	if (msgpack_sz_rep(&mp, 1) == 0 || mp.has_nonstorage) {
+		cdt_check_set_cannotfix(&mp, cf, st);
+		return false;
+	}
+
+	const uint8_t *end = mp.buf + mp.offset;
+
+	if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
+		atomic_incr(&st->cf_invalidkey);
+		atomic_incr(&st->cf_corrupt);
 		return false;
 	}
 
 	for (uint32_t i = 1; i < ele_count - 1; i++) {
+		const uint8_t *start = mp.buf + mp.offset;
 		msgpack_cmp_type cmp = msgpack_cmp(&mp_prev, &mp);
+		uint32_t ele_sz = (uint32_t)(mp.buf + mp.offset - start);
+
+		if (check_map_keys && ! map_is_key(start, ele_sz)) {
+			atomic_incr(&st->cf_invalidkey);
+			atomic_incr(&st->cf_corrupt);
+			return false;
+		}
+
+		start = mp.buf + mp.offset;
 
 		if (msgpack_sz(&mp_prev) == 0 || msgpack_sz(&mp) == 0 ||
 				mp.has_nonstorage) {
-			cdt_check_set_cannotfix(&mp, cf, &bc->cdt_map);
+			cdt_check_set_cannotfix(&mp, cf, st);
 			return false;
 		}
 
@@ -444,7 +686,7 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			if (mp.has_nonstorage || (ele_count - i - 1 != 0 &&
 					(msgpack_sz_rep(&mp, 2 * (ele_count - i - 2)) == 0 ||
 							mp.has_nonstorage))) {
-				cdt_check_set_cannotfix(&mp, cf, &bc->cdt_map);
+				cdt_check_set_cannotfix(&mp, cf, st);
 				return false;
 			}
 
@@ -455,16 +697,16 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 				if (cdt_map_dup_key_check(ele_count, cf->contents,
 						cf->content_sz)) {
 					cf->need_log = true;
-					atomic_incr(&bc->cdt_map.cannot_fix);
-					atomic_incr(&bc->cdt_map.cf_dupkey);
+					atomic_incr(&st->cannot_fix);
+					atomic_incr(&st->cf_dupkey);
 					return false;
 				}
 
-				atomic_incr(&bc->cdt_map.need_fix);
-				atomic_incr(&bc->cdt_map.nf_order);
+				atomic_incr(&st->need_fix);
+				atomic_incr(&st->nf_order);
 
 				if (mp.offset != sz) {
-					atomic_incr(&bc->cdt_map.nf_padding);
+					atomic_incr(&st->nf_padding);
 					cf->nf_padding = sz - mp.offset;
 				}
 
@@ -472,20 +714,29 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			}
 
 			cf->need_log = true;
-			atomic_incr(&bc->cdt_map.cannot_fix);
-			atomic_incr(&bc->cdt_map.cf_corrupt);
+			atomic_incr(&st->cannot_fix);
+			atomic_incr(&st->cf_corrupt);
+			return false;
+		}
+
+		const uint8_t *end = mp.buf + mp.offset;
+
+		if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
+			atomic_incr(&st->cf_invalidkey);
+			atomic_incr(&st->cf_corrupt);
 			return false;
 		}
 	}
 
 	cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
-	return cdt_check_sz(&mp, sz, cf, &bc->cdt_map);
+	return cdt_check_sz(&mp, sz, cf, st);
 }
 
 // Return true for need fix.
 static bool
-cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
-		backup_config *bc)
+cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
+		bool check_map_keys)
+//		backup_config *bc)
 {
 	msgpack_in mp = {
 			.buf = buf,
@@ -496,8 +747,8 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 	if (! msgpack_get_list_ele_count(&mp, &ele_count)) {
 		cf->need_log = true;
-		atomic_incr(&bc->cdt_list.cannot_fix);
-		atomic_incr(&bc->cdt_list.cf_corrupt);
+		atomic_incr(&st->cannot_fix);
+		atomic_incr(&st->cf_corrupt);
 		return false;
 	}
 
@@ -505,7 +756,7 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 		cf->ele_count = ele_count;
 		cf->contents = mp.buf + mp.offset;
 		cf->content_sz = 0;
-		return cdt_check_sz(&mp, sz, cf, &bc->cdt_list);
+		return cdt_check_sz(&mp, sz, cf, st);
 	}
 
 	msgpack_ext ext;
@@ -513,8 +764,8 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 	if (msgpack_peek_is_ext(&mp)) {
 		if (! msgpack_get_ext(&mp, &ext)) {
 			cf->need_log = true;
-			atomic_incr(&bc->cdt_list.cannot_fix);
-			atomic_incr(&bc->cdt_list.cf_corrupt);
+			atomic_incr(&st->cannot_fix);
+			atomic_incr(&st->cf_corrupt);
 			return false; // corrupted ext
 		}
 	}
@@ -522,14 +773,32 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 		cf->ele_count = ele_count;
 		cf->contents = mp.buf + mp.offset;
 
-		if (msgpack_sz_rep(&mp, ele_count) == 0 || mp.has_nonstorage) {
-			cdt_check_set_cannotfix(&mp, cf, &bc->cdt_list);
+		if (check_map_keys) {
+			for (uint32_t i = 0; i < ele_count; i++) {
+				const uint8_t *start = mp.buf + mp.offset;
+
+				if (msgpack_sz_rep(&mp, 1) == 0 || mp.has_nonstorage) {
+					cdt_check_set_cannotfix(&mp, cf, st);
+					return false;
+				}
+
+				const uint8_t *end = mp.buf + mp.offset;
+
+				if (check_map_keys_internal(start, end) == NULL) {
+					atomic_incr(&st->cf_invalidkey);
+					atomic_incr(&st->cf_corrupt);
+					return false;
+				}
+			}
+		}
+		else if (msgpack_sz_rep(&mp, ele_count) == 0 || mp.has_nonstorage) {
+			cdt_check_set_cannotfix(&mp, cf, st);
 			return false;
 		}
 
 		cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
 
-		return cdt_check_sz(&mp, sz, cf, &bc->cdt_list);
+		return cdt_check_sz(&mp, sz, cf, st);
 	}
 
 	cf->ele_count = ele_count - 1;
@@ -537,24 +806,35 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 
 	if (cf->ele_count == 0) {
 		cf->content_sz = 0;
-		return cdt_check_sz(&mp, sz, cf, &bc->cdt_list);
+		return cdt_check_sz(&mp, sz, cf, st);
 	}
 
 	msgpack_in mp_prev = mp;
+	const uint8_t *start = mp.buf + mp.offset;
 
 	if (msgpack_sz_rep(&mp, 1) == 0 || mp.has_nonstorage) {
-		cdt_check_set_cannotfix(&mp, cf, &bc->cdt_list);
+		cdt_check_set_cannotfix(&mp, cf, st);
+		return false;
+	}
+
+	const uint8_t *end = mp.buf + mp.offset;
+
+	if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
+		atomic_incr(&st->cf_invalidkey);
+		atomic_incr(&st->cf_corrupt);
 		return false;
 	}
 
 	for (uint32_t i = 1; i < ele_count - 1; i++) {
+		const uint8_t *start = mp.buf + mp.offset;
 		msgpack_cmp_type cmp = msgpack_cmp(&mp_prev, &mp);
+		const uint8_t *end = mp.buf + mp.offset;
 
 		if (cmp != MSGPACK_CMP_LESS && cmp != MSGPACK_CMP_EQUAL) {
 			if (mp.has_nonstorage || (ele_count - i - 2 != 0 &&
 					(msgpack_sz_rep(&mp, ele_count - i - 2) == 0 ||
 							mp.has_nonstorage))) {
-				cdt_check_set_cannotfix(&mp, cf, &bc->cdt_list);
+				cdt_check_set_cannotfix(&mp, cf, st);
 				return false;
 			}
 
@@ -562,32 +842,39 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 			cf->nf_list_order = true;
 
 			if (mp.offset <= sz) {
-				atomic_incr(&bc->cdt_list.need_fix);
-				atomic_incr(&bc->cdt_list.nf_order);
+				atomic_incr(&st->need_fix);
+				atomic_incr(&st->nf_order);
 
 				if (mp.offset != sz) {
-					atomic_incr(&bc->cdt_list.nf_padding);
+					atomic_incr(&st->nf_padding);
 					cf->nf_padding = sz - mp.offset;
 				}
 
 				return true; // fix order and maybe padding
 			}
 
-			atomic_incr(&bc->cdt_list.cannot_fix);
-			atomic_incr(&bc->cdt_list.cf_corrupt);
+			atomic_incr(&st->cannot_fix);
+			atomic_incr(&st->cf_corrupt);
+			return false;
+		}
+
+		if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
+			atomic_incr(&st->cf_invalidkey);
+			atomic_incr(&st->cf_corrupt);
 			return false;
 		}
 	}
 
 	if (mp.has_nonstorage) {
 		cf->need_log = true;
-		atomic_incr(&bc->cdt_list.cannot_fix);
-		atomic_incr(&bc->cdt_list.cf_nonstorage);
+		atomic_incr(&st->cannot_fix);
+		atomic_incr(&st->cf_nonstorage);
 		return false;
 	}
 
 	cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
-	return cdt_check_sz(&mp, sz, cf, &bc->cdt_list);
+
+	return cdt_check_sz(&mp, sz, cf, st);
 }
 
 // Return true to need fix.
@@ -597,10 +884,12 @@ cdt_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, backup_config *bc)
 	switch (msgpack_buf_peek_type(buf, sz)) {
 	case MSGPACK_TYPE_LIST:
 		atomic_incr(&bc->cdt_list.count);
-		return cdt_list_need_fix(buf, sz, cf, bc);
+		return cdt_list_need_fix(buf, sz, cf, &bc->cdt_list,
+				bc->check_map_keys);
 	case MSGPACK_TYPE_MAP:
 		atomic_incr(&bc->cdt_map.count);
-		return cdt_map_need_fix(buf, sz, cf, bc);
+		return cdt_map_need_fix(buf, sz, cf, &bc->cdt_map,
+				bc->check_map_keys);
 	default:
 		break;
 	}
@@ -646,7 +935,7 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 
 	// add list append items
 	as_packer pk = {
-			.buffer = malloc(new_buf_sz),
+			.buffer = cf_malloc(new_buf_sz),
 			.capacity = new_buf_sz
 	};
 
@@ -665,6 +954,7 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 		err("as_cdt_add_packed() failed");
 		as_operations_destroy(&ops);
 		atomic_incr(&stat->nf_failed);
+		cf_free(pk.buffer);
 		return;
 	}
 
@@ -675,16 +965,18 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 		err("as_testlist_op() returned %d - %s", error.code, error.message);
 		as_operations_destroy(&ops);
 		atomic_incr(&stat->nf_failed);
+		cf_free(pk.buffer);
 		return;
 	}
 
 	as_operations_destroy(&ops);
+	cf_free(pk.buffer);
 	atomic_incr(&stat->fixed);
 }
 
 // Return true to log the record.
 static bool
-cdt_try_fix(aerospike *as, as_record *rec, backup_config *bc)
+cdt_check(aerospike *as, as_record *rec, backup_config *bc)
 {
 	bool need_log = false; // log record if any bin is corrupt
 
@@ -774,7 +1066,7 @@ scan_callback(const as_val *val, void *cont)
 
 	atomic_incr(&pnc->conf->rec_count_checked);
 
-	if (! cdt_try_fix(pnc->conf->as, rec, pnc->conf)) {
+	if (! cdt_check(pnc->conf->as, rec, pnc->conf)) {
 		return true;
 	}
 
@@ -1063,10 +1355,16 @@ counter_thread_func(void *cont)
 	}
 
 	inf("CDT Mode: %s", conf->cdt_fix ? "fix" : "validate");
+	if (conf->check_map_keys) {
+		inf("check-map-keys = True");
+	}
 	inf("%10u Lists", conf->cdt_list.count);
 	inf("%10u   Unfixable", conf->cdt_list.cannot_fix);
 	inf("%10u     Has non-storage", conf->cdt_list.cf_nonstorage);
 	inf("%10u     Corrupted", conf->cdt_list.cf_corrupt);
+	if (conf->check_map_keys) {
+		inf("%10u     Invalid Keys", conf->cdt_list.cf_invalidkey);
+	}
 	inf("%10u   Need Fix", conf->cdt_list.need_fix);
 	inf("%10u     Fixed", conf->cdt_list.fixed);
 	inf("%10u     Fix failed", conf->cdt_list.nf_failed);
@@ -1078,6 +1376,9 @@ counter_thread_func(void *cont)
 	inf("%10u     Has duplicate keys", conf->cdt_map.cf_dupkey);
 	inf("%10u     Has non-storage", conf->cdt_map.cf_nonstorage);
 	inf("%10u     Corrupted", conf->cdt_map.cf_corrupt);
+	if (conf->check_map_keys) {
+		inf("%10u     Invalid Keys", conf->cdt_map.cf_invalidkey);
+	}
 	inf("%10u   Need Fix", conf->cdt_map.need_fix);
 	inf("%10u     Fixed", conf->cdt_map.fixed);
 	inf("%10u     Fix failed", conf->cdt_map.nf_failed);
@@ -1833,6 +2134,7 @@ main(int32_t argc, char **argv)
 		{ "only-config-file", required_argument, 0, CONFIG_FILE_OPT_ONLY_CONFIG_FILE},
 
 		{ "cdt-fix-ordered-list-unique", no_argument, NULL, CDT_FIX_OPT },
+		{ "cdt-check-map-keys", no_argument, NULL, CDT_MAP_KEYS },
 
 		// Config options
 		{ "host", required_argument, 0, 'h'},
@@ -1907,12 +2209,11 @@ main(int32_t argc, char **argv)
 
 	int32_t opt;
 	uint64_t tmp;
+	const char *optstring = "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIVZL:";
 
 	// option string should start with '-' to avoid argv permutation
 	// we need same argv sequence in third check to support space separated optional argument value
-	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
-					options, 0)) != -1) {
-
+	while ((opt = getopt_long(argc, argv, optstring, options, 0)) != -1) {
 		switch (opt) {
 			case 'V':
 				print_version();
@@ -1934,8 +2235,7 @@ main(int32_t argc, char **argv)
 	// Reset to optind (internal variable)
 	// to parse all options again
 	optind = 0;
-	while ((opt = getopt_long(argc, argv, "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
-			options, 0)) != -1) {
+	while ((opt = getopt_long(argc, argv, optstring, options, 0)) != -1) {
 		switch (opt) {
 			case CONFIG_FILE_OPT_FILE:
 				config_fname = optarg;
@@ -1961,12 +2261,14 @@ main(int32_t argc, char **argv)
 			if (! config_from_file(&conf, instance, config_fname, 0)) {
 				return false;
 			}
-		} else {
+		}
+		else {
 			if (! config_from_files(&conf, instance, config_fname)) {
 				return false;
 			}
 		}
-	} else { 
+	}
+	else {
 		if (read_only_conf_file) {
 			fprintf(stderr, "--no-config-file and only-config-file are mutually exclusive option. Please enable only one.\n");
 			return false;
@@ -1976,15 +2278,14 @@ main(int32_t argc, char **argv)
 	// Reset to optind (internal variable)
 	// to parse all options again
 	optind = 0;
-	while ((opt = getopt_long(argc, argv, "h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIuVZa:b:L:",
-			options, 0)) != -1) {
+	while ((opt = getopt_long(argc, argv, optstring + 1, options, 0)) != -1) {
 		switch (opt) {
 		case 'h':
 			conf.host = optarg;
 			break;
 
 		case 'p':
-			if (!better_atoi(optarg, &tmp) || tmp < 1 || tmp > 65535) {
+			if (! better_atoi(optarg, &tmp) || tmp < 1 || tmp > 65535) {
 				err("Invalid port value %s", optarg);
 				goto cleanup1;
 			}
@@ -1999,12 +2300,14 @@ main(int32_t argc, char **argv)
 		case 'P':
 			if (optarg) {
 				conf.password = optarg;
-			} else {
+			}
+			else {
 				if (optind < argc && NULL != argv[optind] &&
 						'-' != argv[optind][0] ) {
 					// space separated argument value
 					conf.password = argv[optind++];
-				} else {
+				}
+				else {
 					// No password specified should
 					// force it to default password
 					// to trigger prompt.
@@ -2034,7 +2337,7 @@ main(int32_t argc, char **argv)
 			break;
 
 		case 'F':
-			if (!better_atoi(optarg, &tmp) || tmp < 1) {
+			if (! better_atoi(optarg, &tmp) || tmp < 1) {
 				err("Invalid file limit value %s", optarg);
 				goto cleanup1;
 			}
@@ -2069,7 +2372,7 @@ main(int32_t argc, char **argv)
 			break;
 
 		case 'w':
-			if (!better_atoi(optarg, &tmp) || tmp < 1 || tmp > MAX_PARALLEL) {
+			if (! better_atoi(optarg, &tmp) || tmp < 1 || tmp > MAX_PARALLEL) {
 				err("Invalid parallelism value %s", optarg);
 				goto cleanup1;
 			}
@@ -2086,7 +2389,7 @@ main(int32_t argc, char **argv)
 			break;
 
 		case 'N':
-			if (!better_atoi(optarg, &tmp) || tmp < 1) {
+			if (! better_atoi(optarg, &tmp) || tmp < 1) {
 				err("Invalid bandwidth value %s", optarg);
 				goto cleanup1;
 			}
@@ -2167,6 +2470,10 @@ main(int32_t argc, char **argv)
 
 		case CDT_FIX_OPT:
 			conf.cdt_fix = true;
+			break;
+
+		case CDT_MAP_KEYS:
+			conf.check_map_keys = true;
 			break;
 
 		default:

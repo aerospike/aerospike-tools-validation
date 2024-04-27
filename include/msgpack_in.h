@@ -1,7 +1,7 @@
 /*
  * msgpack_in.h
  *
- * Copyright (C) 2019 Aerospike, Inc.
+ * Copyright (C) 2019-2022 Aerospike, Inc.
  *
  * Portions may be licensed to Aerospike, Inc. under one or more contributor
  * license agreements.
@@ -22,6 +22,8 @@
 
 #pragma once
 
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
 //==========================================================
 // Includes.
 //
@@ -34,12 +36,26 @@
 // Typedefs & constants.
 //
 
-typedef struct {
+typedef struct msgpack_in_s {
 	const uint8_t *buf;
 	uint32_t buf_sz;
 	uint32_t offset;
 	bool has_nonstorage;
+	bool has_unordered_map;
 } msgpack_in;
+
+typedef struct msgpack_vec_s {
+	const uint8_t* buf;
+	uint32_t buf_sz;
+	uint32_t offset;
+} msgpack_vec;
+
+typedef struct msgpack_in_vec_s {
+	uint32_t n_vecs;
+	uint32_t idx;
+	bool has_nonstorage;
+	msgpack_vec *vecs;
+} msgpack_in_vec;
 
 typedef struct msgpack_ext_s {
 	const uint8_t *data;	// pointer to ext contents
@@ -78,6 +94,18 @@ typedef enum {
 	MSGPACK_N_TYPES
 } msgpack_type;
 
+typedef struct msgpack_display_str_s {
+	char str[512];
+} msgpack_display_str;
+
+#define define_msgpack_vec_copy(__name, __copy_ptr) \
+		msgpack_vec __name ## __vecs[(__copy_ptr)->n_vecs]; \
+		for (uint32_t i = 0; i < (__copy_ptr)->n_vecs; i++) { \
+			__name ## __vecs[i] = (__copy_ptr)->vecs[i]; \
+		} \
+		msgpack_in_vec __name = *(__copy_ptr); \
+		__name.vecs = __name ## __vecs;
+
 
 //==========================================================
 // Public API.
@@ -106,6 +134,7 @@ msgpack_buf_peek_type(const uint8_t *buf, uint32_t buf_sz)
 }
 bool msgpack_peek_is_ext(const msgpack_in *mp);
 
+const uint8_t *msgpack_get_ele(msgpack_in *mp, uint32_t *sz_r);
 bool msgpack_get_bool(msgpack_in *mp, bool *value);
 
 bool msgpack_get_uint64(msgpack_in *mp, uint64_t *i);
@@ -125,6 +154,20 @@ bool msgpack_get_double(msgpack_in *mp, double *x);
 const uint8_t *msgpack_get_bin(msgpack_in *mp, uint32_t *sz_r);
 
 bool msgpack_get_ext(msgpack_in *mp, msgpack_ext *ext);
+static inline uint32_t
+msgpack_buf_get_ext(const uint8_t *buf, uint32_t buf_sz, msgpack_ext *ext)
+{
+	msgpack_in mp = {
+			.buf = buf,
+			.buf_sz = buf_sz
+	};
+
+	if (! msgpack_get_ext(&mp, ext)) {
+		return 0;
+	}
+
+	return mp.offset;
+}
 
 bool msgpack_get_list_ele_count(msgpack_in *mp, uint32_t *count_r);
 static inline bool
@@ -139,3 +182,37 @@ msgpack_buf_get_list_ele_count(const uint8_t *buf, uint32_t buf_sz,
 	return msgpack_get_list_ele_count(&mp, count_r);
 }
 bool msgpack_get_map_ele_count(msgpack_in *mp, uint32_t *count_r);
+static inline bool
+msgpack_buf_get_map_ele_count(const uint8_t *buf, uint32_t buf_sz,
+		uint32_t *count_r)
+{
+	msgpack_in mp = {
+			.buf = buf,
+			.buf_sz = buf_sz
+	};
+
+	return msgpack_get_map_ele_count(&mp, count_r);
+}
+
+uint32_t msgpack_compactify(uint8_t *buf, uint32_t buf_sz, bool *was_modified);
+uint32_t msgpack_compactify_element(uint8_t *dest, const uint8_t *src);
+const uint8_t *msgpack_parse(const uint8_t *buf, const uint8_t * const end, uint32_t *count, msgpack_type *type, bool *has_nonstorage, bool *not_compact);
+
+uint32_t msgpack_sz_vec(msgpack_in_vec *mv);
+bool msgpack_get_bool_vec(msgpack_in_vec *mv, bool *value);
+bool msgpack_get_uint64_vec(msgpack_in_vec *mv, uint64_t *i);
+
+static inline bool
+msgpack_get_int64_vec(msgpack_in_vec *mv, int64_t *i)
+{
+	return msgpack_get_uint64_vec(mv, (uint64_t *)i);
+}
+
+bool msgpack_get_list_ele_count_vec(msgpack_in_vec *mv, uint32_t *count_r);
+msgpack_type msgpack_peek_type_vec(const msgpack_in_vec *mv);
+const uint8_t *msgpack_get_ele_vec(msgpack_in_vec *mv, uint32_t *sz_r);
+const uint8_t *msgpack_get_bin_vec(msgpack_in_vec *mv, uint32_t *sz_r);
+
+bool msgpack_display(msgpack_in *mp, msgpack_display_str *str);
+
+void msgpack_print_vec(msgpack_in_vec *mv, const char *name);
