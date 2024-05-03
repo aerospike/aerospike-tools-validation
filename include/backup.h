@@ -63,9 +63,10 @@ typedef struct cdt_stats_s {
 	uint32_t nf_padding;
 
 	uint32_t cannot_fix;
-	uint32_t cf_dupkey; // map only
+	uint32_t cf_dupkey; // map top level only
 	uint32_t cf_nonstorage;
 	uint32_t cf_corrupt;
+	uint32_t cf_invalidkey; // includes sub levels
 } cdt_stats;
 
 ///
@@ -111,6 +112,7 @@ typedef struct {
 	char *auth_mode;					///< Authentication mode
 
 	bool cdt_fix;
+	bool check_map_keys;
 
 	cdt_stats cdt_list;
 	cdt_stats cdt_map;

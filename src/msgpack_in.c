@@ -1,7 +1,7 @@
 /*
  * msgpack_in.c
  *
- * Copyright (C) 2019 Aerospike, Inc.
+ * Copyright (C) 2019-2024 Aerospike, Inc.
  *
  * Portions may be licensed to Aerospike, Inc. under one or more contributor
  * license agreements.
@@ -20,16 +20,24 @@
  * along with this program.  If not, see http://www.gnu.org/licenses/
  */
 
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+
+//==========================================================
+// Includes.
+//
+
 #include "msgpack_in.h"
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "aerospike/as_bytes.h"
+#include "aerospike/as_msgpack.h"
 #include "citrusleaf/cf_byte_order.h"
-
-//#include "fault.h"
 
 
 //==========================================================
@@ -37,6 +45,8 @@
 //
 
 #define cf_warning(...)
+#define cf_assert(x, ...) ((void)x)
+#define cf_crash(...)
 
 #define CMP_EXT_TYPE 0xFF
 #define CMP_WILDCARD 0x00
@@ -56,6 +66,7 @@ typedef struct {
 	uint32_t len;
 	msgpack_type type;
 	bool has_nonstorage;
+	bool has_unordered_map;
 } parse_meta;
 
 
@@ -63,7 +74,6 @@ typedef struct {
 // Forward declarations.
 //
 
-static inline msgpack_type bytes_internal_to_msgpack_type(uint8_t type, uint32_t len);
 static inline msgpack_type bytes_internal_to_type(uint8_t type, uint32_t len);
 
 static inline const uint8_t *msgpack_sz_table(const uint8_t *buf, const uint8_t * const end, uint32_t *count, bool *has_nonstorage);
@@ -76,7 +86,7 @@ static inline msgpack_cmp_type msgpack_cmp_internal(parse_meta *meta0, parse_met
 
 
 //==========================================================
-// Macros.
+// Inlines & macros.
 //
 
 #define MSGPACK_CMP_RETURN(__p0, __p1) \
@@ -104,6 +114,353 @@ static inline msgpack_cmp_type msgpack_cmp_internal(parse_meta *meta0, parse_met
 //
 
 uint32_t
+msgpack_sz_vec(msgpack_in_vec *mv)
+{
+	if (mv->idx >= mv->n_vecs) {
+		return 0;
+	}
+
+	uint32_t i = mv->idx;
+	const uint8_t * const start = mv->vecs[i].buf + mv->vecs[i].offset;
+	const uint8_t * const end = mv->vecs[i].buf + mv->vecs[i].buf_sz;
+	const uint8_t * const buf = msgpack_sz_internal(start, end, 1,
+			&mv->has_nonstorage);
+
+	if (buf == NULL) {
+		return 0;
+	}
+
+	if (buf == end) {
+		mv->vecs[i].offset = mv->vecs[i].buf_sz;
+		mv->idx++;
+		return (uint32_t)(end - start);
+	}
+
+	if (buf > end) {
+		mv->vecs[i].offset = mv->vecs[i].buf_sz;
+		i++;
+		mv->vecs[i].offset += (uint32_t)(buf - end);
+
+		if (mv->vecs[i].offset > mv->vecs[i].buf_sz) {
+			return 0;
+		}
+
+		mv->idx++;
+
+		if (mv->vecs[i].offset == mv->vecs[i].buf_sz) {
+			mv->idx++;
+		}
+
+		return (uint32_t)(buf - start);
+	}
+
+	mv->vecs[i].offset += (uint32_t)(buf - start);
+
+	return (uint32_t)(buf - start);
+}
+
+bool
+msgpack_get_bool_vec(msgpack_in_vec *mv, bool *value)
+{
+	if (mv->idx >= mv->n_vecs) {
+		return false;
+	}
+
+	msgpack_in mp = {
+			.buf = mv->vecs[mv->idx].buf + mv->vecs[mv->idx].offset,
+			.buf_sz = mv->vecs[mv->idx].buf_sz - mv->vecs[mv->idx].offset
+	};
+
+	if (! msgpack_get_bool(&mp, value)) {
+		return false;
+	}
+
+	mv->vecs[mv->idx].offset += mp.offset;
+
+	if (mv->vecs[mv->idx].offset == mv->vecs[mv->idx].buf_sz) {
+		mv->idx++;
+	}
+
+	return true;
+}
+
+bool
+msgpack_get_uint64_vec(msgpack_in_vec *mv, uint64_t *i)
+{
+	if (mv->idx >= mv->n_vecs) {
+		return false;
+	}
+
+	msgpack_in mp = {
+			.buf = mv->vecs[mv->idx].buf + mv->vecs[mv->idx].offset,
+			.buf_sz = mv->vecs[mv->idx].buf_sz - mv->vecs[mv->idx].offset
+	};
+
+	if (! msgpack_get_uint64(&mp, i)) {
+		return false;
+	}
+
+	mv->vecs[mv->idx].offset += mp.offset;
+
+	if (mv->vecs[mv->idx].offset == mv->vecs[mv->idx].buf_sz) {
+		mv->idx++;
+	}
+
+	return true;
+}
+
+bool
+msgpack_get_list_ele_count_vec(msgpack_in_vec *mv, uint32_t *count_r)
+{
+	if (mv->idx >= mv->n_vecs) {
+		return false;
+	}
+
+	msgpack_in mp = {
+			.buf = mv->vecs[mv->idx].buf + mv->vecs[mv->idx].offset,
+			.buf_sz = mv->vecs[mv->idx].buf_sz - mv->vecs[mv->idx].offset
+	};
+
+	if (! msgpack_get_list_ele_count(&mp, count_r)) {
+		return false;
+	}
+
+	mv->vecs[mv->idx].offset += mp.offset;
+
+	if (mv->vecs[mv->idx].offset == mv->vecs[mv->idx].buf_sz) {
+		mv->idx++;
+	}
+
+	return true;
+}
+
+msgpack_type
+msgpack_peek_type_vec(const msgpack_in_vec *mv)
+{
+	if (mv->idx >= mv->n_vecs) {
+		return MSGPACK_TYPE_ERROR;
+	}
+
+	msgpack_in mp = {
+			.buf = mv->vecs[mv->idx].buf,
+			.buf_sz = mv->vecs[mv->idx].buf_sz,
+			.offset = mv->vecs[mv->idx].offset
+	};
+
+	return msgpack_peek_type(&mp);
+}
+
+const uint8_t *
+msgpack_get_ele_vec(msgpack_in_vec *mv, uint32_t *sz_r)
+{
+	if (mv->idx >= mv->n_vecs) {
+		return NULL;
+	}
+
+	const uint8_t* buf = mv->vecs[mv->idx].buf + mv->vecs[mv->idx].offset;
+
+	if ((*sz_r = msgpack_sz_vec(mv)) == 0) {
+		return NULL;
+	}
+
+	return buf;
+}
+
+const uint8_t *
+msgpack_get_bin_vec(msgpack_in_vec *mv, uint32_t *sz_r)
+{
+	if (mv->idx >= mv->n_vecs) {
+		return false;
+	}
+
+	const uint8_t *buf = mv->vecs[mv->idx].buf + mv->vecs[mv->idx].offset;
+	uint8_t b = *buf++;
+
+	switch (b) {
+	case 0xc4:
+	case 0xd9: // str/bin with 8 bit header
+		mv->vecs[mv->idx].offset += 2;
+
+		if (mv->vecs[mv->idx].offset > mv->vecs[mv->idx].buf_sz) {
+			return NULL;
+		}
+
+		*sz_r = (uint32_t)*buf;
+		break;
+	case 0xc5:
+	case 0xda: // str/bin with 16 bit header
+		mv->vecs[mv->idx].offset += 3;
+
+		if (mv->vecs[mv->idx].offset > mv->vecs[mv->idx].buf_sz) {
+			return NULL;
+		}
+
+		*sz_r = (uint32_t)cf_swap_from_be16(*(uint16_t *)buf);
+		break;
+	case 0xc6:
+	case 0xdb: // str/bin with 32 bit header
+		mv->vecs[mv->idx].offset += 5;
+
+		if (mv->vecs[mv->idx].offset > mv->vecs[mv->idx].buf_sz) {
+			return NULL;
+		}
+
+		*sz_r = cf_swap_from_be32(*(uint32_t *)buf);
+		break;
+	default:
+		if ((b & 0xe0) == 0xa0) { // str bytes with 8 bit combined header
+			mv->vecs[mv->idx].offset++;
+			*sz_r = (uint32_t)(b & 0x1f);
+			break;
+		}
+
+		return NULL;
+	}
+
+	buf = mv->vecs[mv->idx].buf + mv->vecs[mv->idx].offset;
+	mv->vecs[mv->idx].offset += *sz_r;
+
+	if (mv->vecs[mv->idx].offset > mv->vecs[mv->idx].buf_sz) {
+		return NULL;
+	}
+
+	if (mv->vecs[mv->idx].offset == mv->vecs[mv->idx].buf_sz) {
+		mv->idx++;
+	}
+
+	return buf;
+}
+
+bool
+msgpack_display(msgpack_in *mp, msgpack_display_str *str)
+{
+	msgpack_type type = msgpack_peek_type(mp);
+
+	switch (type) {
+	case MSGPACK_TYPE_NIL:
+		strcpy(str->str, "nil");
+		return true;
+	case MSGPACK_TYPE_FALSE:
+		strcpy(str->str, "false");
+		return true;
+	case MSGPACK_TYPE_TRUE:
+		strcpy(str->str, "true");
+		return true;
+	case MSGPACK_TYPE_NEGINT:
+	case MSGPACK_TYPE_INT: {
+		int64_t v;
+
+		if (! msgpack_get_int64(mp, &v)) {
+			return false;
+		}
+
+		sprintf(str->str, "%ld", v);
+
+		return true;
+	}
+	case MSGPACK_TYPE_STRING: {
+		uint32_t sz;
+		const uint8_t *p = msgpack_get_bin(mp, &sz);
+
+		if (p == NULL) {
+			return false;
+		}
+
+		sprintf(str->str, "<string#%u>", sz - 1);
+
+		return true;
+	}
+	case MSGPACK_TYPE_LIST: {
+		uint32_t ele_count;
+
+		if (! msgpack_get_list_ele_count(mp, &ele_count)) {
+			return false;
+		}
+
+		sprintf(str->str, "<list#%u>", ele_count);
+
+		return true;
+	}
+	case MSGPACK_TYPE_MAP: {
+		uint32_t ele_count;
+
+		if (! msgpack_get_map_ele_count(mp, &ele_count)) {
+			return false;
+		}
+
+		sprintf(str->str, "<map#%u>", ele_count);
+
+		return true;
+	}
+	case MSGPACK_TYPE_BYTES: {
+		uint32_t sz;
+		const uint8_t *p = msgpack_get_bin(mp, &sz);
+
+		if (p == NULL) {
+			return false;
+		}
+
+		if (sz == 0) {
+			strcpy(str->str, "<blob#_>");
+			return true;
+		}
+
+		if (p[0] != AS_BYTES_BLOB) {
+			sprintf(str->str, "<blob%u#%u>", p[0], sz - 1);
+			return true;
+		}
+
+		sprintf(str->str, "<blob#%u>", sz - 1);
+		return true;
+	}
+	case MSGPACK_TYPE_DOUBLE: {
+		double value;
+
+		if (! msgpack_get_double(mp, &value)) {
+			return false;
+		}
+
+		sprintf(str->str, "%f", value);
+
+		return true;
+	}
+	case MSGPACK_TYPE_GEOJSON: {
+		uint32_t sz;
+		const uint8_t *p = msgpack_get_bin(mp, &sz);
+
+		if (p == NULL) {
+			return false;
+		}
+
+		sprintf(str->str, "<geojson#%u>", sz - 1);
+
+		return true;
+	}
+	case MSGPACK_TYPE_EXT: {
+		msgpack_ext ext;
+
+		if (! msgpack_get_ext(mp, &ext)) {
+			return false;
+		}
+
+		sprintf(str->str, "<ext#%u>", ext.size);
+
+		return true;
+	}
+	case MSGPACK_TYPE_CMP_WILDCARD:
+		strcpy(str->str, "*");
+		return true;
+	case MSGPACK_TYPE_CMP_INF:
+		strcpy(str->str, "inf");
+		return true;
+	default:
+		break;
+	}
+
+	return false;
+}
+
+uint32_t
 msgpack_sz_rep(msgpack_in *mp, uint32_t rep_count)
 {
 	const uint8_t * const start = mp->buf + mp->offset;
@@ -114,7 +471,7 @@ msgpack_sz_rep(msgpack_in *mp, uint32_t rep_count)
 		return 0;
 	}
 
-	uint32_t sz = (uint32_t)(buf - start);
+	uint32_t sz = buf - start;
 
 	mp->offset += sz;
 
@@ -149,8 +506,10 @@ msgpack_cmp(msgpack_in *mp0, msgpack_in *mp1)
 
 	mp0->has_nonstorage = meta0.has_nonstorage;
 	mp1->has_nonstorage = meta1.has_nonstorage;
-	mp0->offset = (uint32_t)(meta0.buf - mp0->buf);
-	mp1->offset = (uint32_t)(meta1.buf - mp1->buf);
+	mp0->has_unordered_map = meta0.has_unordered_map;
+	mp1->has_unordered_map = meta1.has_unordered_map;
+	mp0->offset = meta0.buf - mp0->buf;
+	mp1->offset = meta1.buf - mp1->buf;
 
 	return ret;
 }
@@ -242,11 +601,11 @@ msgpack_peek_type(const msgpack_in *mp)
 		if (*buf++ == 1) {
 			if (*buf++ == CMP_EXT_TYPE) {
 				if (*buf == CMP_WILDCARD) {
-					return AS_CMP_WILDCARD;
+					return MSGPACK_TYPE_CMP_WILDCARD;
 				}
 
 				if (*buf == CMP_INF) {
-					return AS_CMP_INF;
+					return MSGPACK_TYPE_CMP_INF;
 				}
 			}
 		}
@@ -308,6 +667,21 @@ msgpack_peek_is_ext(const msgpack_in *mp)
 	return false;
 }
 
+const uint8_t *
+msgpack_get_ele(msgpack_in *mp, uint32_t *sz_r)
+{
+	const uint8_t *buf = mp->buf + mp->offset;
+	uint32_t sz = msgpack_sz(mp);
+
+	if (sz == 0) {
+		return NULL;
+	}
+
+	*sz_r = sz;
+
+	return buf;
+}
+
 bool
 msgpack_get_bool(msgpack_in *mp, bool *value)
 {
@@ -349,8 +723,8 @@ msgpack_get_uint64(msgpack_in *mp, uint64_t *i)
 	case 0xcd: // unsigned 16 bit integer
 	case 0xce: // unsigned 32 bit integer
 	case 0xcf: // unsigned 64 bit integer
-		b = (uint8_t)(1U << (b - 0xcc));
-		mp->offset += 1 + (uint32_t)b;
+		b = 1U << (b - 0xcc);
+		mp->offset += 1 + b;
 
 		if (mp->offset > mp->buf_sz) {
 			return false;
@@ -370,8 +744,8 @@ msgpack_get_uint64(msgpack_in *mp, uint64_t *i)
 	case 0xd1: // signed 16 bit integer
 	case 0xd2: // signed 32 bit integer
 	case 0xd3: // signed 64 bit integer
-		b = (uint8_t)(1U << (b & 0x0f));
-		mp->offset += 1 + (uint32_t)b;
+		b = 1U << (b & 0x0f);
+		mp->offset += 1 + b;
 
 		if (mp->offset > mp->buf_sz) {
 			return false;
@@ -379,7 +753,6 @@ msgpack_get_uint64(msgpack_in *mp, uint64_t *i)
 
 		if ((*buf & 0x80) != 0) {
 			*i = extract_neg_int64(buf, b);
-			mp->offset += 1 + (uint32_t)b;
 			return true;
 		}
 
@@ -658,29 +1031,65 @@ msgpack_get_map_ele_count(msgpack_in *mp, uint32_t *count_r)
 	return true;
 }
 
+uint32_t
+msgpack_compactify(uint8_t *buf, uint32_t buf_sz, bool *was_modified)
+{
+	uint32_t count = 1;
+	const uint8_t * const start = buf;
+	const uint8_t * const end = buf + buf_sz;
+	bool has_nonstorage = false;
+	uint8_t *dst_start = buf;
+	uint8_t *src_start = buf;
+
+	if (was_modified != NULL) {
+		*was_modified = false;
+	}
+
+	for (uint32_t i = 0; i < count; i++) {
+		uint8_t * const ele_start = buf;
+		bool not_compact = false;
+
+		buf = (uint8_t *)msgpack_parse(buf, end, &count, NULL,
+				&has_nonstorage, &not_compact);
+
+		if (buf > end || buf == NULL) {
+			cf_warning(AS_PARTICLE, "msgpack_sz_internal: invalid at i %u count %u", i, count);
+			return 0;
+		}
+
+		if (not_compact) {
+			if (was_modified != NULL) {
+				*was_modified = true;
+			}
+
+			if (dst_start != src_start) {
+				size_t sz = ele_start - src_start;
+
+				memmove(dst_start, src_start, sz);
+				dst_start += sz;
+			}
+			else {
+				dst_start = ele_start;
+			}
+
+			dst_start += msgpack_compactify_element(dst_start, ele_start);
+			src_start = buf;
+		}
+	}
+
+	if (dst_start != src_start) {
+		memmove(dst_start, src_start, buf - src_start);
+
+		return dst_start - start + buf - src_start;
+	}
+
+	return buf - start;
+}
+
 
 //==========================================================
 // Local helpers.
 //
-
-static inline msgpack_type
-bytes_internal_to_msgpack_type(uint8_t type, uint32_t len)
-{
-	if (len == 0) {
-		return MSGPACK_TYPE_BYTES;
-	}
-
-	if (type == AS_BYTES_STRING) {
-		return MSGPACK_TYPE_STRING;
-	}
-
-	if (type == AS_BYTES_GEOJSON) {
-		return MSGPACK_TYPE_GEOJSON;
-	}
-
-	// All other types are considered BYTES.
-	return MSGPACK_TYPE_BYTES;
-}
 
 static inline msgpack_type
 bytes_internal_to_type(uint8_t type, uint32_t len)
@@ -759,7 +1168,7 @@ msgpack_sz_table(const uint8_t *buf, const uint8_t * const end, uint32_t *count,
 	}
 	case 0xde: // map with 16 bit header
 		SZ_PARSE_BUF_CHECK(buf, end, 2);
-		*count += 2 * (uint32_t)cf_swap_from_be16(*(uint16_t *)buf);
+		*count += 2 * cf_swap_from_be16(*(uint16_t *)buf);
 		return buf + 2;
 	case 0xdf: // map with 32 bit header
 		SZ_PARSE_BUF_CHECK(buf, end, 4);
@@ -831,7 +1240,7 @@ msgpack_sz_table(const uint8_t *buf, const uint8_t * const end, uint32_t *count,
 	}
 
 	if ((b & 0xf0) == 0x80) { // map with 8 bit combined header
-		*count += 2 * (uint32_t)(b & 0x0f);
+		*count += 2 * (b & 0x0f);
 		return buf;
 	}
 
@@ -908,7 +1317,15 @@ cmp_parse_container(parse_meta *meta, uint32_t count)
 		break;
 	default:
 		// not an ext type
+		if (meta->type == MSGPACK_TYPE_MAP) {
+			meta->has_unordered_map = true;
+		}
 		return;
+	}
+
+	if (meta->type == MSGPACK_TYPE_MAP &&
+			(type & AS_PACKED_MAP_FLAG_K_ORDERED) == 0) {
+		meta->has_unordered_map = true;
 	}
 
 	if (type == CMP_EXT_TYPE) {
@@ -949,7 +1366,7 @@ msgpack_cmp_parse(parse_meta *meta)
 	case 0xcd: // unsigned 16 bit integer
 	case 0xce: // unsigned 32 bit integer
 	case 0xcf: // unsigned 64 bit integer
-		b = (uint8_t)(1U << (b - 0xcc));
+		b = 1U << (b - 0xcc);
 		CMP_PARSE_BUF_CHECK(meta, b);
 		meta->i_num = extract_uint64(meta->buf, b);
 		meta->buf += b;
@@ -973,7 +1390,7 @@ msgpack_cmp_parse(parse_meta *meta)
 	case 0xd1: // signed 16 bit integer
 	case 0xd2: // signed 32 bit integer
 	case 0xd3: // signed 64 bit integer
-		b = (uint8_t)(1U << (b & 0x0f));
+		b = 1U << (b & 0x0f);
 		CMP_PARSE_BUF_CHECK(meta, b);
 
 		if ((*meta->buf & 0x80) != 0) {
@@ -1016,7 +1433,7 @@ msgpack_cmp_parse(parse_meta *meta)
 		meta->len = *meta->buf;
 		meta->buf += 1 + meta->len;
 		CMP_PARSE_BUF_CHECK(meta, 0);
-		meta->type = bytes_internal_to_msgpack_type(*meta->data, meta->len);
+		meta->type = bytes_internal_to_type(*meta->data, meta->len);
 		return;
 
 	case 0xc5:
@@ -1026,7 +1443,7 @@ msgpack_cmp_parse(parse_meta *meta)
 		meta->len = cf_swap_from_be16(*(uint16_t *)meta->buf);
 		meta->buf += 2 + meta->len;
 		CMP_PARSE_BUF_CHECK(meta, 0);
-		meta->type = bytes_internal_to_msgpack_type(*meta->data, meta->len);
+		meta->type = bytes_internal_to_type(*meta->data, meta->len);
 		return;
 
 	case 0xc6:
@@ -1036,7 +1453,7 @@ msgpack_cmp_parse(parse_meta *meta)
 		meta->len = cf_swap_from_be32(*(uint32_t *)meta->buf);
 		meta->buf += 4 + meta->len;
 		CMP_PARSE_BUF_CHECK(meta, 0);
-		meta->type = bytes_internal_to_msgpack_type(*meta->data, meta->len);
+		meta->type = bytes_internal_to_type(*meta->data, meta->len);
 		return;
 
 	case 0xdc: { // list with 16 bit header
@@ -1057,7 +1474,7 @@ msgpack_cmp_parse(parse_meta *meta)
 	}
 	case 0xde: // map with 16 bit header
 		CMP_PARSE_BUF_CHECK(meta, 2);
-		meta->len = 2 * (uint32_t)cf_swap_from_be16(*(uint16_t *)meta->buf);
+		meta->len = 2 * cf_swap_from_be16(*(uint16_t *)meta->buf);
 		meta->buf += 2;
 		meta->type = MSGPACK_TYPE_MAP;
 		cmp_parse_container(meta, 2);
@@ -1192,12 +1609,12 @@ msgpack_cmp_parse(parse_meta *meta)
 		meta->len = b & 0x1f;
 		meta->buf += meta->len;
 		CMP_PARSE_BUF_CHECK(meta, 0);
-		meta->type = bytes_internal_to_msgpack_type(*meta->data, meta->len);
+		meta->type = bytes_internal_to_type(*meta->data, meta->len);
 		return;
 	}
 
 	if ((b & 0xf0) == 0x80) { // map with 8 bit combined header
-		meta->len = 2 * (uint32_t)(b & 0x0f);
+		meta->len = 2 * (b & 0x0f);
 		meta->type = MSGPACK_TYPE_MAP;
 		cmp_parse_container(meta, 2);
 		return;
@@ -1313,4 +1730,383 @@ msgpack_cmp_internal(parse_meta *meta0, parse_meta *meta1)
 	}
 
 	return end_result;
+}
+
+uint32_t
+msgpack_compactify_element(uint8_t *dest, const uint8_t *src)
+{
+	msgpack_in mp = {
+			.buf = src,
+			.buf_sz = UINT32_MAX
+	};
+
+	as_packer pk = {
+			.buffer = dest,
+			.capacity = UINT32_MAX
+	};
+
+	switch (*src) {
+	case 0xcc: // unsigned 8 bit integer
+	case 0xcd: // unsigned 16 bit integer
+	case 0xce: // unsigned 32 bit integer
+	case 0xcf: { // unsigned 64 bit integer
+		uint64_t val;
+		bool ret = msgpack_get_uint64(&mp, &val);
+
+		cf_assert(ret, AS_PARTICLE, "unexpected");
+		as_pack_uint64(&pk, val);
+		break;
+	}
+
+	case 0xd0: // signed 8 bit integer
+	case 0xd1: // signed 16 bit integer
+	case 0xd2: // signed 32 bit integer
+	case 0xd3: { // signed 64 bit integer
+		int64_t val;
+		bool ret = msgpack_get_int64(&mp, &val);
+
+		cf_assert(ret, AS_PARTICLE, "unexpected");
+		as_pack_int64(&pk, val);
+		break;
+	}
+
+	case 0xc4: // bin 8
+	case 0xc5: // bin 16
+	case 0xc6: // bin 32
+	case 0xd9: // str 8
+	case 0xda: // str 16
+	case 0xdb: { // str 32
+		uint32_t buf_sz = 0; // init for Centos6
+		const uint8_t *buf = msgpack_get_bin(&mp, &buf_sz);
+
+		as_pack_str(&pk, NULL, buf_sz);
+
+		if (pk.buffer != NULL) {
+			memmove(pk.buffer + pk.offset, buf, buf_sz);
+		}
+
+		return pk.offset + buf_sz;
+	}
+
+	case 0xdc: // list with 16 bit header
+	case 0xdd: { // list with 32 bit header
+		uint32_t ele_count = 0; // init for Centos6
+
+		msgpack_get_list_ele_count(&mp, &ele_count);
+		as_pack_list_header(&pk, ele_count);
+		break;
+	}
+
+	case 0xde: // map with 16 bit header
+	case 0xdf: { // map with 32 bit header
+		uint32_t ele_count = 0; // init for Centos6
+
+		msgpack_get_map_ele_count(&mp, &ele_count);
+		as_pack_map_header(&pk, ele_count);
+		break;
+	}
+
+	case 0xc7: // ext 8
+	case 0xc8: // ext 16
+	case 0xc9: { // ext 32
+		msgpack_ext ext = { 0 }; // init for Centos6
+
+		msgpack_get_ext(&mp, &ext);
+		as_pack_ext_header(&pk, ext.size, ext.type);
+
+		if (pk.buffer != NULL) {
+			memmove(pk.buffer + pk.offset, ext.data, ext.size);
+		}
+
+		return pk.offset + ext.size;
+	}
+
+	case 0xc0: // nil
+	case 0xc1: // reserved
+	case 0xc2: // boolean false
+	case 0xc3: // boolean true
+	case 0xca: // float
+	case 0xcb: // double
+	case 0xd4: // fixext 1
+	case 0xd5: // fixext 2
+	case 0xd6: // fixext 4
+	case 0xd7: // fixext 8
+	case 0xd8: // fixext 16
+	default:
+		cf_crash(AS_PARTICLE, "unexpected %x %*pH", *src, 10, src);
+	}
+
+	return pk.offset;
+}
+
+const uint8_t *
+msgpack_parse(const uint8_t *buf, const uint8_t * const end, uint32_t *count,
+		msgpack_type *type, bool *has_nonstorage, bool *not_compact)
+{
+	SZ_PARSE_BUF_CHECK(buf, end, 1);
+
+	uint8_t b = *buf++;
+	msgpack_type dummy;
+
+	if (type == NULL) {
+		type = &dummy;
+	}
+
+	uint32_t ret;
+
+	switch (b) {
+	case 0xc0: // nil
+		*type = MSGPACK_TYPE_NIL;
+		return buf;
+	case 0xc2: // boolean false
+		*type = MSGPACK_TYPE_FALSE;
+		return buf;
+	case 0xc3: // boolean true
+		*type = MSGPACK_TYPE_TRUE;
+		return buf;
+	case 0xc1: // reserved
+		*type = MSGPACK_TYPE_ERROR;
+		return NULL;
+
+	case 0xcc: // unsigned 8 bit integer
+		SZ_PARSE_BUF_CHECK(buf, end, 1);
+		*not_compact = *buf <= 0x7f;
+		*type = MSGPACK_TYPE_INT;
+		return buf + 1;
+	case 0xcd: // unsigned 16 bit integer
+		SZ_PARSE_BUF_CHECK(buf, end, 2);
+		*not_compact = cf_swap_from_be16(*(uint16_t *)buf) <= 0xff;
+		*type = MSGPACK_TYPE_INT;
+		return buf + 2;
+	case 0xce: // unsigned 32 bit integer
+		SZ_PARSE_BUF_CHECK(buf, end, 4);
+		*not_compact = cf_swap_from_be32(*(uint32_t *)buf) <= 0xffff;
+		*type = MSGPACK_TYPE_INT;
+		return buf + 4;
+	case 0xcf: // unsigned 64 bit integer
+		SZ_PARSE_BUF_CHECK(buf, end, 8);
+		*not_compact = cf_swap_from_be64(*(uint64_t *)buf) <= 0xffffffffULL;
+		*type = MSGPACK_TYPE_INT;
+		return buf + 8;
+
+	case 0xd0: // signed 8 bit integer
+		SZ_PARSE_BUF_CHECK(buf, end, 1);
+		*not_compact = (*buf & 0x80) == 0 || *buf >= 0xe0;
+		*type = MSGPACK_TYPE_INT;
+		return buf + 1;
+	case 0xd1: // signed 16 bit integer
+		SZ_PARSE_BUF_CHECK(buf, end, 2);
+		*not_compact = (*buf & 0x80) == 0 ||
+				cf_swap_from_be16(*(uint16_t *)buf) >= 0xff00;
+		*type = MSGPACK_TYPE_INT;
+		return buf + 2;
+	case 0xd2: // signed 32 bit integer
+		SZ_PARSE_BUF_CHECK(buf, end, 4);
+		*not_compact = (*buf & 0x80) == 0 ||
+				cf_swap_from_be32(*(uint32_t *)buf) >= 0xffff0000;
+		*type = MSGPACK_TYPE_INT;
+		return buf + 4;
+	case 0xd3: // signed 64 bit integer
+		SZ_PARSE_BUF_CHECK(buf, end, 8);
+		*not_compact = (*buf & 0x80) == 0 ||
+				cf_swap_from_be64(*(uint64_t *)buf) >= 0xffffffff00000000ULL;
+		*type = MSGPACK_TYPE_INT;
+		return buf + 8;
+
+	case 0xca: // float
+		SZ_PARSE_BUF_CHECK(buf, end, 4);
+		*type = MSGPACK_TYPE_DOUBLE;
+		return buf + 4;
+	case 0xcb: // double
+		SZ_PARSE_BUF_CHECK(buf, end, 8);
+		*type = MSGPACK_TYPE_DOUBLE;
+		return buf + 8;
+
+	case 0xc4: // bin 8
+		*not_compact = true;
+		// no break
+	case 0xd9: // str 8
+		SZ_PARSE_BUF_CHECK(buf, end, 1);
+		*not_compact = *buf <= 0x1f;
+		*type = MSGPACK_TYPE_BYTES;
+		ret = 1 + *buf;
+		break;
+
+	case 0xc5: // bin 16
+		*not_compact = true;
+		// no break
+	case 0xda: { // str 16
+		SZ_PARSE_BUF_CHECK(buf, end, 2);
+
+		uint16_t len = cf_swap_from_be16(*(uint16_t *)buf);
+
+		*not_compact = len <= 0xff;
+		*type = MSGPACK_TYPE_BYTES;
+		ret = 2 + len;
+
+		break;
+	}
+	case 0xc6: // bin 32
+		*not_compact = true;
+		// no break
+	case 0xdb: { // str 32
+		SZ_PARSE_BUF_CHECK(buf, end, 4);
+
+		uint32_t len = cf_swap_from_be32(*(uint32_t *)buf);
+
+		*not_compact = len <= 0xffff;
+		*type = MSGPACK_TYPE_BYTES;
+		ret = 4 + len;
+
+		break;
+	}
+
+	case 0xdc: { // list with 16 bit header
+		SZ_PARSE_BUF_CHECK(buf, end, 2);
+
+		uint16_t len = cf_swap_from_be16(*(uint16_t *)buf);
+
+		*not_compact = len <= 0x0f;
+		*count += len;
+		*type = MSGPACK_TYPE_LIST;
+
+		return buf + 2;
+	}
+	case 0xdd: { // list with 32 bit header
+		SZ_PARSE_BUF_CHECK(buf, end, 4);
+
+		uint32_t len = cf_swap_from_be32(*(uint32_t *)buf);
+
+		*not_compact = len <= 0xffff;
+		*count += len;
+		*type = MSGPACK_TYPE_LIST;
+
+		return buf + 4;
+	}
+
+	case 0xde: { // map with 16 bit header
+		SZ_PARSE_BUF_CHECK(buf, end, 2);
+
+		uint16_t len = cf_swap_from_be16(*(uint16_t *)buf);
+
+		*not_compact = len <= 0x0f;
+		*count += 2 * len;
+		*type = MSGPACK_TYPE_MAP;
+
+		return buf + 2;
+	}
+	case 0xdf: // map with 32 bit header
+		SZ_PARSE_BUF_CHECK(buf, end, 4);
+
+		uint32_t len = cf_swap_from_be32(*(uint32_t *)buf);
+
+		*not_compact = len <= 0xffff;
+		*count += 2 * len;
+		*type = MSGPACK_TYPE_MAP;
+
+		return buf + 4;
+
+	case 0xd4: // fixext 1
+		SZ_PARSE_BUF_CHECK(buf, end, 2);
+
+		if (*buf == CMP_EXT_TYPE) {
+			*has_nonstorage = true;
+		}
+
+		*type = MSGPACK_TYPE_EXT;
+
+		return buf + 1 + 1;
+	case 0xd5: // fixext 2
+		SZ_PARSE_BUF_CHECK(buf, end, 3);
+
+		if (*buf == CMP_EXT_TYPE) {
+			*has_nonstorage = true;
+		}
+
+		*type = MSGPACK_TYPE_EXT;
+
+		return buf + 1 + 2;
+	case 0xd6: // fixext 4
+		SZ_PARSE_BUF_CHECK(buf, end, 5);
+		*type = MSGPACK_TYPE_EXT;
+		return buf + 1 + 4;
+	case 0xd7: // fixext 8
+		SZ_PARSE_BUF_CHECK(buf, end, 9);
+		*type = MSGPACK_TYPE_EXT;
+		return buf + 1 + 8;
+	case 0xd8: // fixext 16
+		SZ_PARSE_BUF_CHECK(buf, end, 17);
+		*type = MSGPACK_TYPE_EXT;
+		return buf + 1 + 16;
+	case 0xc7: // ext 8
+		SZ_PARSE_BUF_CHECK(buf, end, 2);
+
+		if (*buf != 0) {
+			if (*(buf + 1) == CMP_EXT_TYPE && *buf < 4) {
+				*has_nonstorage = true;
+			}
+
+			*not_compact = (*buf & 0xe0) == 0 && (*buf & (*buf - 1)) == 0; // *buf is 1, 2, 4, 8, or 16
+		}
+
+		*type = MSGPACK_TYPE_EXT;
+		ret = 1 + 1 + *buf;
+		break;
+	case 0xc8: { // ext 16
+		SZ_PARSE_BUF_CHECK(buf, end, 3);
+
+		uint32_t len = cf_swap_from_be16(*(uint16_t *)buf);
+
+		if (*(buf + 2) == CMP_EXT_TYPE && len < 4 && len != 0) {
+			*has_nonstorage = true;
+		}
+
+		*not_compact = len <= 0xff;
+		*type = MSGPACK_TYPE_EXT;
+		ret = 2 + 1 + len;
+		break;
+	}
+	case 0xc9: { // ext 32
+		SZ_PARSE_BUF_CHECK(buf, end, 5);
+
+		uint32_t len = cf_swap_from_be32(*(uint32_t *)buf);
+
+		if (*(buf + 4) == CMP_EXT_TYPE && len < 4 && len != 0) {
+			*has_nonstorage = true;
+		}
+
+		*not_compact = len <= 0xffff;
+		*type = MSGPACK_TYPE_EXT;
+		ret = 4 + 1 + len;
+		break;
+	}
+	default:
+		if (b < 0x80 || b >= 0xe0) { // 8 bit combined integer
+			*type = MSGPACK_TYPE_INT;
+			return buf;
+		}
+
+		if ((b & 0xe0) == 0xa0) { // raw bytes with 8 bit combined header
+			*type = MSGPACK_TYPE_BYTES;
+			return buf + (b & 0x1f);
+		}
+
+		if ((b & 0xf0) == 0x80) { // map with 8 bit combined header
+			*count += 2 * (b & 0x0f);
+			*type = MSGPACK_TYPE_MAP;
+			return buf;
+		}
+
+		if ((b & 0xf0) == 0x90) { // list with 8 bit combined header
+			*count += b & 0x0f;
+			*type = MSGPACK_TYPE_LIST;
+			return buf;
+		}
+
+		*type = MSGPACK_TYPE_ERROR;
+		return NULL;
+	}
+
+	SZ_PARSE_BUF_CHECK(buf, end, ret);
+	return buf + ret;
 }
