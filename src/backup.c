@@ -586,8 +586,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 				}
 
 				if (! map_is_key(start, sz)) {
+					cf->need_log = true;
 					atomic_incr(&st->cf_invalidkey);
-					atomic_incr(&st->cf_corrupt);
 					return false;
 				}
 
@@ -602,8 +602,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 				const uint8_t *end = mp.buf + mp.offset;
 
 				if (check_map_keys_internal(start, end) == NULL) {
+					cf->need_log = true;
 					atomic_incr(&st->cf_invalidkey);
-					atomic_incr(&st->cf_corrupt);
 					return false;
 				}
 			}
@@ -643,8 +643,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 	}
 
 	if (check_map_keys && ! map_is_key(start, ele_sz)) {
+		cf->need_log = true;
 		atomic_incr(&st->cf_invalidkey);
-		atomic_incr(&st->cf_corrupt);
 		return false;
 	}
 
@@ -658,8 +658,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 	const uint8_t *end = mp.buf + mp.offset;
 
 	if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
+		cf->need_log = true;
 		atomic_incr(&st->cf_invalidkey);
-		atomic_incr(&st->cf_corrupt);
 		return false;
 	}
 
@@ -669,8 +669,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 		uint32_t ele_sz = (uint32_t)(mp.buf + mp.offset - start);
 
 		if (check_map_keys && ! map_is_key(start, ele_sz)) {
+			cf->need_log = true;
 			atomic_incr(&st->cf_invalidkey);
-			atomic_incr(&st->cf_corrupt);
 			return false;
 		}
 
@@ -722,8 +722,8 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 		const uint8_t *end = mp.buf + mp.offset;
 
 		if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
+			cf->need_log = true;
 			atomic_incr(&st->cf_invalidkey);
-			atomic_incr(&st->cf_corrupt);
 			return false;
 		}
 	}
@@ -785,8 +785,8 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 				const uint8_t *end = mp.buf + mp.offset;
 
 				if (check_map_keys_internal(start, end) == NULL) {
+					cf->need_log = true;
 					atomic_incr(&st->cf_invalidkey);
-					atomic_incr(&st->cf_corrupt);
 					return false;
 				}
 			}
@@ -820,8 +820,8 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 	const uint8_t *end = mp.buf + mp.offset;
 
 	if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
+		cf->need_log = true;
 		atomic_incr(&st->cf_invalidkey);
-		atomic_incr(&st->cf_corrupt);
 		return false;
 	}
 
@@ -859,8 +859,8 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 		}
 
 		if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
+			cf->need_log = true;
 			atomic_incr(&st->cf_invalidkey);
-			atomic_incr(&st->cf_corrupt);
 			return false;
 		}
 	}
@@ -1961,7 +1961,7 @@ print_version(void)
 ///
 /// Displays usage information.
 ///
-/// @param name  The actual name of the `asbackup` binary.
+/// @param name  The actual name of the binary.
 ///
 static void
 usage(const char *name)
@@ -1978,6 +1978,7 @@ usage(const char *name)
 	fprintf(stderr, "                      NOT allowed in configuration file\n");
 
 	fprintf(stderr, " --cdt-fix-ordered-list-unique\n");
+	fprintf(stderr, " --no-cdt-check-map-keys\n");
 	fprintf(stderr, "                      Fix CDT ordered list records.\n");
 
 	fprintf(stderr, "\n");
@@ -2134,7 +2135,7 @@ main(int32_t argc, char **argv)
 		{ "only-config-file", required_argument, 0, CONFIG_FILE_OPT_ONLY_CONFIG_FILE},
 
 		{ "cdt-fix-ordered-list-unique", no_argument, NULL, CDT_FIX_OPT },
-		{ "cdt-check-map-keys", no_argument, NULL, CDT_MAP_KEYS },
+		{ "no-cdt-check-map-keys", no_argument, NULL, CDT_MAP_KEYS },
 
 		// Config options
 		{ "host", required_argument, 0, 'h'},
@@ -2473,7 +2474,7 @@ main(int32_t argc, char **argv)
 			break;
 
 		case CDT_MAP_KEYS:
-			conf.check_map_keys = true;
+			conf.check_map_keys = false;
 			break;
 
 		default:
@@ -2877,6 +2878,8 @@ config_default(backup_config *conf)
 	conf->machine = NULL;
 	conf->bandwidth = 0;
 	conf->file_limit = DEFAULT_FILE_LIMIT * 1024 * 1024;
+
+	conf->check_map_keys = true;
 
 	memset(&conf->tls, 0, sizeof(as_config_tls));
 }
