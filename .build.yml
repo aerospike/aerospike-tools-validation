@@ -3,7 +3,7 @@ name: aerospike-tools-validate
 dependency:
   - url: git@github.com:citrusleaf/aerospike-client-c
     dir: client
-    ref: 5.2.8
+    ref: 6.6.0
 
 container:
   - base:
