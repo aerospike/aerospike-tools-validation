@@ -27,7 +27,9 @@
 #include <aerospike/as_atomic.h>
 #include <aerospike/as_msgpack.h>
 
-#define atomic_incr(x) as_aaf_seq(x, 1)
+#define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_SEQ_CST)
+#define atomic_load(_target) __atomic_load_n(_target, __ATOMIC_SEQ_CST)
+#define atomic_store(_target, _value) __atomic_store_n(_target, _value, __ATOMIC_SEQ_CST)
 
 extern char *aerospike_client_version;  ///< The C client's version string.
 
@@ -251,8 +253,8 @@ open_dir_file(per_node_context *pnc)
 	}
 
 	uint64_t rec_count_estimate = pnc->conf->rec_count_estimate;
-	uint64_t rec_count_total = as_load_seq(&pnc->conf->rec_count_total);
-	uint64_t byte_count_total = as_load_seq(&pnc->conf->byte_count_total);
+	uint64_t rec_count_total = atomic_load(&pnc->conf->rec_count_total);
+	uint64_t byte_count_total = atomic_load(&pnc->conf->byte_count_total);
 	uint64_t rec_remain = rec_count_total > rec_count_estimate ? 0 :
 			rec_count_estimate - rec_count_total;
 	uint64_t rec_size = rec_count_total == 0 ? 0 : byte_count_total / rec_count_total;
@@ -1120,7 +1122,7 @@ scan_callback(const as_val *val, void *cont)
 	if (pnc->conf->bandwidth > 0) {
 		safe_lock();
 
-		while (as_load_seq(&pnc->conf->byte_count_total) >=
+		while (atomic_load(&pnc->conf->byte_count_total) >=
 				pnc->conf->byte_count_limit && ! stop) {
 			safe_wait(&bandwidth_cond);
 		}
@@ -1280,7 +1282,7 @@ counter_thread_func(void *cont)
 	backup_config *conf = args->conf;
 	uint32_t iter = 0;
 	cf_clock prev_ms = cf_getms();
-	uint64_t prev_recs = as_load_seq(&conf->rec_count_checked);
+	uint64_t prev_recs = atomic_load(&conf->rec_count_checked);
 
 	while (true) {
 		sleep(1);
@@ -1290,7 +1292,7 @@ counter_thread_func(void *cont)
 		prev_ms = now_ms;
 
 		if (conf->rec_count_estimate > 0) {
-			uint64_t now_recs = as_load_seq(&conf->rec_count_checked);
+			uint64_t now_recs = atomic_load(&conf->rec_count_checked);
 
 			int32_t percent = (int32_t)(now_recs * 100 / conf->rec_count_estimate);
 			uint64_t recs = now_recs - prev_recs;
@@ -1344,8 +1346,8 @@ counter_thread_func(void *cont)
 		}
 	}
 
-	uint64_t records = as_load_seq(&conf->rec_count_total);
-	uint64_t bytes = as_load_seq(&conf->byte_count_total);
+	uint64_t records = atomic_load(&conf->rec_count_total);
+	uint64_t bytes = atomic_load(&conf->byte_count_total);
 	inf("Found %" PRIu64 " invalid record(s) from %u node(s), "
 			"%" PRIu64 " byte(s) in total (~%" PRIu64 " B/rec)", records,
 			args->n_node_names, bytes, records == 0 ? 0 : bytes / records);
@@ -2648,9 +2650,9 @@ main(int32_t argc, char **argv)
 	}
 
 	inf("Processing %u node(s)", n_node_names);
-	as_store_seq(&conf.rec_count_total, 0);
-	as_store_seq(&conf.byte_count_total, 0);
-	as_store_seq(&conf.rec_count_checked, 0);
+	atomic_store(&conf.rec_count_total, 0);
+	atomic_store(&conf.byte_count_total, 0);
+	atomic_store(&conf.rec_count_checked, 0);
 	conf.byte_count_limit = conf.bandwidth;
 	uint64_t rec_count_estimate;
 
