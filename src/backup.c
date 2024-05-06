@@ -24,6 +24,7 @@
 
 #include "msgpack_in.h"
 
+#include <aerospike/as_atomic.h>
 #include <aerospike/as_msgpack.h>
 
 extern char *aerospike_client_version;  ///< The C client's version string.
