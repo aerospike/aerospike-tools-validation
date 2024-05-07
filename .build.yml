@@ -7,11 +7,15 @@ dependency:
 
 container:
   - base:
+      - docker.qe.aerospike.com/build/aerospike-tools-alt:centos-7
       - docker.qe.aerospike.com/build/aerospike-tools-alt:rhel-8
       - docker.qe.aerospike.com/build/aerospike-tools-alt:rhel-9
       - docker.qe.aerospike.com/build/aerospike-tools-alt:amazonlinux-2023
+      - docker.qe.aerospike.com/build/aerospike-tools-alt:debian-9
+      - docker.qe.aerospike.com/build/aerospike-tools-alt:debian-10
       - docker.qe.aerospike.com/build/aerospike-tools-alt:debian-11
       - docker.qe.aerospike.com/build/aerospike-tools-alt:debian-12
+      - docker.qe.aerospike.com/build/aerospike-tools-alt:ubuntu-18.04
       - docker.qe.aerospike.com/build/aerospike-tools-alt:ubuntu-20.04
       - docker.qe.aerospike.com/build/aerospike-tools-alt:ubuntu-22.04
 
