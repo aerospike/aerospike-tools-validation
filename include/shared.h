@@ -164,6 +164,3 @@ typedef struct {
 	uint32_t n_node_names;                      ///< The number of cluster nodes to be backed up.
 	FILE *mach_fd;                              ///< The file descriptor for the machine-readable
 } counter_thread_args;
-
-#define atomic_load(x) as_load_seq(&x)
-#define atomic_incr(x) as_aaf_seq(x, 1)
