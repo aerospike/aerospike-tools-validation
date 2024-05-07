@@ -28,6 +28,7 @@
 #include <aerospike/as_msgpack.h>
 
 #define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_SEQ_CST)
+#define atomic_add(_target, _value) __atomic_add_fetch(_target, _value, __ATOMIC_SEQ_CST)
 #define atomic_load(_target) __atomic_load_n(_target, __ATOMIC_SEQ_CST)
 #define atomic_store(_target, _value) __atomic_store_n(_target, _value, __ATOMIC_SEQ_CST)
 
@@ -276,7 +277,7 @@ open_dir_file(per_node_context *pnc)
 
 	pnc->byte_count_file = bytes;
 	pnc->byte_count_node += bytes;
-	as_aaf_seq(&pnc->conf->byte_count_total, (int64_t)bytes);
+	atomic_add(&pnc->conf->byte_count_total, (int64_t)bytes);
 	return true;
 }
 
@@ -1117,7 +1118,7 @@ scan_callback(const as_val *val, void *cont)
 
 	pnc->byte_count_file += bytes;
 	pnc->byte_count_node += bytes;
-	as_aaf_seq(&pnc->conf->byte_count_total, (int64_t)bytes);
+	atomic_add(&pnc->conf->byte_count_total, (int64_t)bytes);
 
 	if (pnc->conf->bandwidth > 0) {
 		safe_lock();
