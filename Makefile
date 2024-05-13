@@ -1,7 +1,7 @@
 #
 # Aerospike Backup/Restore
 #
-# Copyright (c) 2008-2017 Aerospike, Inc. All rights reserved.
+# Copyright (c) 2008-2024 Aerospike, Inc. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -41,11 +41,15 @@ CFLAGS := -std=gnu99 $(DWARF) -O2 -fno-common -fno-strict-aliasing \
 		-DTOOL_VERSION=\"$(VERSION)\"
 
 ifeq ($(OS), Linux)
-CFLAGS += -pthread -fstack-protector -Wa,--noexecstack
+  CFLAGS += -pthread -fstack-protector -Wa,--noexecstack
 endif
 
 ifeq ($(ARCH), x86_64)
-CFLAGS += -march=nocona
+  CFLAGS += -march=nocona
+endif
+
+ifeq ($(ARCH), aarch64)
+  CFLAGS += -mcpu=neoverse-n1
 endif
 
 LD := $(CC)
@@ -74,7 +78,7 @@ ifeq ($(OPENSSL_STATIC_PATH),)
 else
   LIBRARIES += $(OPENSSL_STATIC_PATH)/libssl.a
   LIBRARIES += $(OPENSSL_STATIC_PATH)/libcrypto.a
-endif 
+endif
 LIBRARIES += -lpthread
 LIBRARIES += -lm
 LIBRARIES += -lz
@@ -88,7 +92,7 @@ endif
 
 src_to_obj = $(1:$(DIR_SRC)/%.c=$(DIR_OBJ)/%.o)
 obj_to_dep = $(1:%.o=%.d)
-src_to_lib = 
+src_to_lib =
 
 BACKUP_INC := $(DIR_INC)/backup.h $(DIR_INC)/enc_text.h $(DIR_INC)/shared.h $(DIR_INC)/utils.h $(DIR_INC)/msgpack_in.h
 BACKUP_SRC := $(DIR_SRC)/backup.c $(DIR_SRC)/conf.c $(DIR_SRC)/utils.c $(DIR_SRC)/enc_text.c $(DIR_SRC)/msgpack_in.c
@@ -132,7 +136,6 @@ rpm:
 .PHONY: deb
 deb:
 	$(MAKE) -f pkg/Makefile.deb
-
 
 $(DIR_DOCS): $(INCS) $(SRCS) README.md
 	if [ ! -d $(DIR_DOCS) ]; then mkdir $(DIR_DOCS); fi
