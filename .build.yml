@@ -7,7 +7,7 @@ dependency:
 
 container:
   - base:
-       - docker.qe.aerospike.com/build/aerospike-tools-alt:centos-7
+      - docker.qe.aerospike.com/build/aerospike-tools-alt:centos-7
       - docker.qe.aerospike.com/build/aerospike-tools-alt:rhel-8
       - docker.qe.aerospike.com/build/aerospike-tools-alt:rhel-9
       - docker.qe.aerospike.com/build/aerospike-tools-alt:amazonlinux-2023
