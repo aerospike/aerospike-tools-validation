@@ -48,6 +48,10 @@ ifeq ($(ARCH), x86_64)
   CFLAGS += -march=nocona
 endif
 
+ifeq ($(ARCH), aarch64)
+  CFLAGS += -mcpu=neoverse-n1
+endif
+
 LD := $(CC)
 LDFLAGS := $(CFLAGS)
 
