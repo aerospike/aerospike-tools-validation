@@ -50,6 +50,10 @@ endif
 
 ifeq ($(ARCH), aarch64)
   CFLAGS += -mcpu=neoverse-n1
+
+  ifeq ($(OS), ubuntu18.04)
+    CC =gcc-9
+  endif
 endif
 
 LD := $(CC)
