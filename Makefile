@@ -1,7 +1,7 @@
 #
 # Aerospike Backup/Restore
 #
-# Copyright (c) 2008-2017 Aerospike, Inc. All rights reserved.
+# Copyright (c) 2008-2024 Aerospike, Inc. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -35,13 +35,25 @@ CC := cc
 
 DWARF := $(shell $(CC) -Wall -Wextra -O2 -o /tmp/asflags_$${$$} src/flags.c; \
 		/tmp/asflags_$${$$}; rm /tmp/asflags_$${$$})
-CFLAGS := -std=gnu99 $(DWARF) -O2 -march=nocona -fno-common -fno-strict-aliasing \
+CFLAGS := -std=gnu99 $(DWARF) -O2 -fno-common -fno-strict-aliasing \
 		-Wall -Wextra -Wconversion -Wsign-conversion -Wmissing-declarations \
 		-D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_FORTIFY_SOURCE=2 -DMARCH_$(ARCH) \
 		-DTOOL_VERSION=\"$(VERSION)\"
 
 ifeq ($(OS), Linux)
-CFLAGS += -pthread -fstack-protector -Wa,--noexecstack
+  CFLAGS += -pthread -fstack-protector -Wa,--noexecstack
+endif
+
+ifeq ($(ARCH), x86_64)
+  CFLAGS += -march=nocona
+endif
+
+ifeq ($(ARCH), aarch64)
+  CFLAGS += -mcpu=neoverse-n1
+
+  ifeq ($(OS), ubuntu18.04)
+    CC =gcc-9
+  endif
 endif
 
 LD := $(CC)
@@ -70,7 +82,7 @@ ifeq ($(OPENSSL_STATIC_PATH),)
 else
   LIBRARIES += $(OPENSSL_STATIC_PATH)/libssl.a
   LIBRARIES += $(OPENSSL_STATIC_PATH)/libcrypto.a
-endif 
+endif
 LIBRARIES += -lpthread
 LIBRARIES += -lm
 LIBRARIES += -lz
@@ -84,7 +96,7 @@ endif
 
 src_to_obj = $(1:$(DIR_SRC)/%.c=$(DIR_OBJ)/%.o)
 obj_to_dep = $(1:%.o=%.d)
-src_to_lib = 
+src_to_lib =
 
 BACKUP_INC := $(DIR_INC)/backup.h $(DIR_INC)/enc_text.h $(DIR_INC)/shared.h $(DIR_INC)/utils.h $(DIR_INC)/msgpack_in.h
 BACKUP_SRC := $(DIR_SRC)/backup.c $(DIR_SRC)/conf.c $(DIR_SRC)/utils.c $(DIR_SRC)/enc_text.c $(DIR_SRC)/msgpack_in.c
@@ -128,7 +140,6 @@ rpm:
 .PHONY: deb
 deb:
 	$(MAKE) -f pkg/Makefile.deb
-
 
 $(DIR_DOCS): $(INCS) $(SRCS) README.md
 	if [ ! -d $(DIR_DOCS) ]; then mkdir $(DIR_DOCS); fi
