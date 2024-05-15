@@ -54,7 +54,7 @@ You should probably run asvalidation first in validation mode to see the kinds o
 | Option | Default | Description|
 |--------|---------|------------|
 | `-n NAMESPACE` or `--namespace NAMESPACE` | - | Namespace to backup. **Mandatory.** |
-| `-s SETS` or `--set SETS` | All sets | The set(s) to backup. May pass in a comma-separated list of sets to back up (version 3.6.1+). Starting with `asbackup` 3.9.0, server version 5.2 or later is required for multi-set backup. Note: multi-set backup cannot be used with `--filter-exp`. |
+| `-s SETS` or `--set SETS` | All sets | The set(s) to backup. May pass in a comma-separated list of sets to back up.|
 | `-B  BIN1,BIN2,...` or `--bin-list BIN1,BIN2,...` | All bins | The bins to back up. |
 | `-M` or `--max-records N` | 0 = all records. | An approximate limit for the number of records to process. Available in server 4.9 and above. Note: this option is mutually exclusive to `--partition-list` and `--after-digest`. |
 
@@ -80,10 +80,10 @@ You should probably run asvalidation first in validation mode to see the kinds o
 | `-d PATH` or `--directory PATH` | - | Directory to store the `.asb` backup files in. If the directory does not exist, it will be created before use. **Mandatory, unless `--output-file` or `--estimate` is given.** |
 | `-o PATH` or `--output-file PATH` | - | The single file to write the backup to. `-` means `stdout`. **Mandatory, unless `--directory` or `--estimate` is given.** |
 | -q `DESIRED-PREFIX`<br /><br />or<br /><br />`--output-file-prefix DESIRED-PREFIX` |  | Must be used with the `--directory` option. A desired prefix for all output files. |
-| `-F LIMIT` or `--file-limit LIMIT` | 250 MiB | File size limit (in MiB) for `--directory`. If a `.asb` backup file crosses this size threshold, `asbackup` will switch to a new file. |
-| `-r` or `--remove-files` | - | Clear directory or remove output file. By default, `asbackup` refuses to write to a non-empty directory or to overwrite an existing backup file. This option clears the given `--directory` or removes an existing `--output-file`. Mutually exclusive to `--continue`. |
+| `-F LIMIT` or `--file-limit LIMIT` | 250 MiB | File size limit (in MiB) for `--directory`. If a `.asb` backup file crosses this size threshold, `asvalidation` will switch to a new file. |
+| `-r` or `--remove-files` | - | Clear directory or remove output file. By default, `asvalidation` refuses to write to a non-empty directory or to overwrite an existing backup file. This option clears the given `--directory` or removes an existing `--output-file`. Mutually exclusive to `--continue`. |
 | `--remove-artifacts` | - | Clear directory or remove output file, like `--remove-files`, without running a backup. This option is mutually exclusive to `--continue` and `--estimate`. |
-| `-N BANDWIDTH` or `--nice BANDWIDTH` | - | Throttles `asbackup`'s write operations to the backup file(s) to not exceed the given bandwidth in MiB/s. Effectively also throttles the scan on the server side as `asbackup` refuses to accept more data than it can write. |
+| `-N BANDWIDTH` or `--nice BANDWIDTH` | - | Throttles `asvalidation`'s write operations to the backup file(s) to not exceed the given bandwidth in MiB/s. Effectively also throttles the scan on the server side as `asvalidation` refuses to accept more data than it can write. |
 
 ### Timeout options
 
