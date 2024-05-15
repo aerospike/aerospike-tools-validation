@@ -30,7 +30,7 @@ A minimal set of options to run this tool.
 | -d | Output Directory |
 | --help | Get a comprehensive list of options for tool |
 
-##Descriptions of possible corruption reasons
+## Descriptions of possible corruption reasons
 |Reason|Description|Disposition|
 |------|---|---|
 |Has non-storage|The bin contains an infinite or wildcard element which is not allowed as storage.|This type of error is unfixable without your manual intervention.|
@@ -40,14 +40,14 @@ A minimal set of options to run this tool.
 |Order|The bin has elements out of order.|Can be fixed by reordering the list with the --cdt-fix-ordered-list-unique option. See server version requirements in Recommendations and Server Versions for When to Run asvalidation.|
 |Padding|The bin has garbage bytes after the valid list or map.|Can be fixed by truncating the extra bytes. See server version requirements in Recommendations and Server Versions for When to Run asvalidation.|
 
-##asvalidation Modes
+## asvalidation Modes
 asvalidation can be run in the following modes. Records without CDTs or detected errors are ignored. Records with detected errors are backed up unless otherwise specified. By default, no fixes are applied.
 
 * "Validation" mode discovers problems and produces a report.
 * "Fix" mode, triggered by the --cdt-fix-ordered-list-unique option, attempts to correct discovered problems where possible.
 You should probably run asvalidation first in validation mode to see the kinds of errors it discovers before running it in fix mode to fix them.
 
-##Options
+## Options
 
 ### Namespace data selection options
 
