@@ -2,7 +2,7 @@
 
 This tool scans all records in a namespace and validates bins with Complex Data
 Type (CDT) values, optionally attempting to repair any damage detected.
-Records with unrecoverable CDT errors are backed up if an output file is
+Records with unrecoverable CDT errors are written to output if an output file is
 specified. Records without CDTs or detected errors are ignored.
 
 By default, no fixes are applied and the fix counts should report zero in
@@ -41,7 +41,7 @@ A minimal set of options to run this tool.
 |Padding|The bin has garbage bytes after the valid list or map.|Can be fixed by truncating the extra bytes. See server version requirements in Recommendations and Server Versions for When to Run asvalidation.|
 
 ## asvalidation Modes
-asvalidation can be run in the following modes. Records without CDTs or detected errors are ignored. Records with detected errors are backed up unless otherwise specified. By default, no fixes are applied.
+asvalidation can be run in the following modes. Records without CDTs or detected errors are ignored. Records with detected errors are saved unless otherwise specified. By default, no fixes are applied.
 
 * "Validation" mode discovers problems and produces a report.
 * "Fix" mode, triggered by the --cdt-fix-ordered-list-unique option, attempts to correct discovered problems where possible.
@@ -53,10 +53,70 @@ You should probably run asvalidation first in validation mode to see the kinds o
 
 | Option | Default | Description|
 |--------|---------|------------|
-| `-n NAMESPACE` or `--namespace NAMESPACE` | - | Namespace to backup. **Mandatory.** |
-| `-s SETS` or `--set SETS` | All sets | The set(s) to backup. May pass in a comma-separated list of sets to back up.|
-| `-B  BIN1,BIN2,...` or `--bin-list BIN1,BIN2,...` | All bins | The bins to back up. |
+| `-n NAMESPACE` or `--namespace NAMESPACE` | - | Namespace to validate. **Mandatory.** |
+| `-s SETS` or `--set SETS` | All sets | The set(s) to validate. May pass in a comma-separated list of sets to validate.|
+| `-B  BIN1,BIN2,...` or `--bin-list BIN1,BIN2,...` | All bins | The bins to validate. |
 | `-M` or `--max-records N` | 0 = all records. | An approximate limit for the number of records to process. Available in server 4.9 and above. Note: this option is mutually exclusive to `--partition-list` and `--after-digest`. |
+
+
+### Partition scanning validation options
+
+#### Partition list
+
+`-X, --partition-list LIST`
+Scan a list of partition filters. Partition filters can be ranges, individual partitions, or records after a specific digest within a single partition.
+
+This option is mutually exclusive with the `-D`, `--after-digest` option described in [After specific digest](#after-specific-digest), `--node-list`, and `--max-records`.
+
+Default number of partitions to scan: 0 to 4095: all partitions.
+
+- `LIST` format: `FILTER1,FILTER2,...`
+- `FILTER` format: `BEGIN-PARTITION -PARTITION-COUNT|DIGEST`
+  - `BEGIN-PARTITION`: 0 to 4095.
+  - Either the optional `PARTITION-COUNT`: 1 to 4096. Default: 1
+  - Or the optional `DIGEST`: Base64-encoded string of desired digest to start at in specified partition.
+
+:::note
+When using multiple partition filters, each partition filter is a single scan call and cannot be parallelized with the `parallel` option. 
+To have more parallelizability, you can either break up the partition filters, or run a validation using only one partition filter.
+:::
+
+When validating only a single partition range, the range is automatically divided into `parallel` segments of near-equal size, each of which is validated in parallel.
+
+**Examples**
+
+`-X 361`
+- Validate only partition 361
+
+`-X 361,529,841`
+- Validate partitions 361, 529, and 841
+
+`-X 361-10`
+- Validate 10 partitions, starting with 361 and including 370.
+
+`-X VSmeSvxNRqr46NbOqiy9gy5LTIc=`
+- Validate all records after the digest `VSmeSvxNRqr46NbOqiy9gy5LTIc=` in its partition (which in this case is partition 2389)
+
+`-X 0-1000,2222,EjRWeJq83vEjRRI0VniavN7xI0U=`
+
+- Validate partitions 0 to 999 (1000 partitions starting from 0)
+- Then validate partition 2222
+- Then validate all records after the digest `EjRWeJq83vEjRRI0VniavN7xI0U=` in its partition
+
+
+#### After specific digest
+
+`-D` , `--after-digest DIGEST`
+Validate records after the specified record digest in that record's partition and all succeeding partitions.
+
+This option is mutually exclusive with the `-X`, `--partition-list` option described in [Partition filter](#partition-list), `--max-records`, and `--node-list`.
+
+- `DIGEST` format: Base64-encoded string of desired digest.
+  This is the same encoding used for the output of digests, so you can copy-and-paste digest identifiers from validation files to use as the command-line argument with `-D`.
+
+**Example**
+
+`-D EjRWeJq83vEjRRI0VniavN7xI0U=`
 
 ### Connection options
 
@@ -67,23 +127,23 @@ You should probably run asvalidation first in validation mode to see the kinds o
 | `-U USER` or `--user USER`                                         | -                | User name with read permission. **Mandatory if the server has security enabled.**                                                                                                                                                                                                                                                                                                                                                    |
 | `-P PASSWORD` or `--password`                                      | -                | Password to authenticate the given user. The first form passes the password on the command line. The second form prompts for the password.                                                                                                                                                                                                                                                                                           |
 | `-A` or `--auth`                                                   | INTERNAL         | Set authentication mode when user and password are defined. Modes are (INTERNAL, EXTERNAL, EXTERNAL_INSECURE, PKI) and the default is INTERNAL. This mode must be set EXTERNAL when using LDAP.                                                                                                                                                                                                                                      |
-| `-l` or `--node-list ADDR1:TLSNAME1:PORT1,...`                     | `localhost:3000` | While `--host` and `--port` automatically discover all cluster nodes, `--node-list` backs up a subset of cluster nodes by first calculating the subset of partitions owned by the listed nodes, and then backing up that list of partitions. This option is mutually exclusive with [`--partition-list`](#partition-list) and [`--after-digest`](#after-specific-digest-for-resuming-incomplete-backup). |
-| `--parallel N`                                                     | 1                | Maximum number of scans to run in parallel. If only one partition range is given, or the entire namespace is being backed up, the range of partitions is evenly divided by this number to be processed in parallel. Otherwise, each filter cannot be parallelized individually, so you may only achieve as much parallelism as there are partition filters.                                                                |
+| `-l` or `--node-list ADDR1:TLSNAME1:PORT1,...`                     | `localhost:3000` | While `--host` and `--port` automatically discover all cluster nodes, `--node-list` scans a subset of cluster nodes by first calculating the subset of partitions owned by the listed nodes, and then validating that list of partitions. This option is mutually exclusive with [`--partition-list`](#partition-list) and [`--after-digest`](#after-specific-digest). |
+| `--parallel N`                                                     | 1                | Maximum number of scans to run in parallel. If only one partition range is given, or the entire namespace is being validated, the range of partitions is evenly divided by this number to be processed in parallel. Otherwise, each filter cannot be parallelized individually, so you may only achieve as much parallelism as there are partition filters.                                                                |
 | `--tls-enable`                                                     | disabled         | Indicates a TLS connection should be used.                                                                                                                                                                                                                                                                                                                                                                                           |
 | `-S` or `--services-alternate`                                     | false            | Set this to `true` to connect to Aerospike node's [`alternate-access-address`](https://aerospike.com/docs/server/reference/configuration?context=all&version=7#network__alternate-access-address).                     |
-| `--prefer-racks RACKID1,...`                                       | disabled         | A comma separated list of rack IDs to prefer when reading records for a backup. This is useful for limiting cross datacenter network traffic.                                                                                                                                                                                                                                                                       |
+| `--prefer-racks RACKID1,...`                                       | disabled         | A comma separated list of rack IDs to prefer when reading records. This is useful for limiting cross datacenter network traffic.                                                                                                                                                                                                                                                                       |
 
 ### Output options
 
 | Option | Default | Description|
 |--------|---------|------------|
-| `-d PATH` or `--directory PATH` | - | Directory to store the `.asb` backup files in. If the directory does not exist, it will be created before use. **Mandatory, unless `--output-file` or `--estimate` is given.** |
-| `-o PATH` or `--output-file PATH` | - | The single file to write the backup to. `-` means `stdout`. **Mandatory, unless `--directory` or `--estimate` is given.** |
+| `-d PATH` or `--directory PATH` | - | Directory to store the `.asb` validation files in. If the directory does not exist, it will be created before use. **Mandatory, unless `--output-file` or `--estimate` is given.** |
+| `-o PATH` or `--output-file PATH` | - | The single file to write to. `-` means `stdout`. **Mandatory, unless `--directory` or `--estimate` is given.** |
 | -q `DESIRED-PREFIX`<br /><br />or<br /><br />`--output-file-prefix DESIRED-PREFIX` |  | Must be used with the `--directory` option. A desired prefix for all output files. |
-| `-F LIMIT` or `--file-limit LIMIT` | 250 MiB | File size limit (in MiB) for `--directory`. If a `.asb` backup file crosses this size threshold, `asvalidation` will switch to a new file. |
-| `-r` or `--remove-files` | - | Clear directory or remove output file. By default, `asvalidation` refuses to write to a non-empty directory or to overwrite an existing backup file. This option clears the given `--directory` or removes an existing `--output-file`. Mutually exclusive to `--continue`. |
-| `--remove-artifacts` | - | Clear directory or remove output file, like `--remove-files`, without running a backup. This option is mutually exclusive to `--continue` and `--estimate`. |
-| `-N BANDWIDTH` or `--nice BANDWIDTH` | - | Throttles `asvalidation`'s write operations to the backup file(s) to not exceed the given bandwidth in MiB/s. Effectively also throttles the scan on the server side as `asvalidation` refuses to accept more data than it can write. |
+| `-F LIMIT` or `--file-limit LIMIT` | 250 MiB | File size limit (in MiB) for `--directory`. If a `.asb` validation file crosses this size threshold, `asvalidation` will switch to a new file. |
+| `-r` or `--remove-files` | - | Clear directory or remove output file. By default, `asvalidation` refuses to write to a non-empty directory or to overwrite an existing validation file. This option clears the given `--directory` or removes an existing `--output-file`. Mutually exclusive to `--continue`. |
+| `--remove-artifacts` | - | Clear directory or remove output file, like `--remove-files`, without running a validation. This option is mutually exclusive to `--continue` and `--estimate`. |
+| `-N BANDWIDTH` or `--nice BANDWIDTH` | - | Throttles `asvalidation`'s write operations to the validation file(s) to not exceed the given bandwidth in MiB/s. Effectively also throttles the scan on the server side as `asvalidation` refuses to accept more data than it can write. |
 
 ### Timeout options
 
@@ -113,18 +173,18 @@ You should probably run asvalidation first in validation mode to see the kinds o
 
 `TLS_NAME` is only used when connecting with a secure TLS enabled server.
 
-### Backup resumption
+### Validation resumption
 
 | Option | Default | Description|
 |--------|---------|------------|
-| `--continue STATE-FILE` | disabled | Enables the resumption of an interrupted backup from provided state file. All other command line arguments should match those used in the initial run (except `--remove-files`, which is mutually exclusive with `--continue`). |
-| `--state-file-dst` | see below | Specifies where to save the backup state file to. If this points to a directory, the state file is saved within the directory using the same naming convention as backup-to-directory state files. If this does not point to a directory, the path is treated as a path to the state file. |
+| `--continue STATE-FILE` | disabled | Enables the resumption of an interrupted validation from provided state file. All other command line arguments should match those used in the initial run (except `--remove-files`, which is mutually exclusive with `--continue`). |
+| `--state-file-dst` | see below | Specifies where to save the validation state file to. If this points to a directory, the state file is saved within the directory using the same naming convention as save-to-directory state files. If this does not point to a directory, the path is treated as a path to the state file. |
 
 ### Other options
 
 | Option | Default | Description|
 |--------|---------|------------|
-| `-v` or `--verbose` | disabled | Output considerably more information about the running backup. |
+| `-v` or `--verbose` | disabled | Output considerably more information about the running validation. |
 | `-m` or `--machine PATH` | - | Output machine-readable status updates to the given path, typically a FIFO. |
 | `-L` or `--records-per-second RPS` | 0 | Available only for Aerospike Database 4.7 and later.<br /><br />Limit total returned records per second (RPS). If `RPS` is zero (the default), a records-per-second limit is not applied. |
 
@@ -368,7 +428,7 @@ Actually, the above `["B"]` form is not the only way to represent bytes-valued b
 
 ### Sample Validation File
 
-The following backup file contains two secondary indexes, a UDF file, and a record. The two empty lines stem from the UDF file, which contains two line feeds.
+The following validation file contains two secondary indexes, a UDF file, and a record. The two empty lines stem from the UDF file, which contains two line feeds.
 
     Version 1.1
     # namespace test
