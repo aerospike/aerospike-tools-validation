@@ -2,7 +2,7 @@
 
 This tool scans all records in a namespace and validates bins with Complex Data
 Type (CDT) values, optionally attempting to repair any damage detected.
-Records with unrecoverable CDT errors are backed up in **asbackup** format if an output file is
+Records with unrecoverable CDT errors are backed up if an output file is
 specified. Records without CDTs or detected errors are ignored.
 
 By default, no fixes are applied and the fix counts should report zero in
@@ -24,10 +24,109 @@ A minimal set of options to run this tool.
 |config|definition|
 |------|---|
 |--cdt-fix-ordered-list-unique|Fix ordered lists that were not stored in order and also remove duplicate elements.|
+|--no-cdt-check-map-keys | Do not check cdt map keys.|
 | -n | Namespace |
 | -o | Output File Name |
 | -d | Output Directory |
 | --help | Get a comprehensive list of options for tool |
+
+##Descriptions of possible corruption reasons
+|Reason|Description|Disposition|
+|------|---|---|
+|Has non-storage|The bin contains an infinite or wildcard element which is not allowed as storage.|This type of error is unfixable without your manual intervention.|
+|Has duplicate keys|A map bin has duplicate key entries.|This type of error is unfixable without your manual intervention.|
+|Corrupted|A problem not attributable to any of the other categories of errors.|This type of error is unfixable without your manual intervention.|
+|Invalid Keys|The bin has a map with at least one invalid key.|This type of error is unfixable without your manual intervention.|
+|Order|The bin has elements out of order.|Can be fixed by reordering the list with the --cdt-fix-ordered-list-unique option. See server version requirements in Recommendations and Server Versions for When to Run asvalidation.|
+|Padding|The bin has garbage bytes after the valid list or map.|Can be fixed by truncating the extra bytes. See server version requirements in Recommendations and Server Versions for When to Run asvalidation.|
+
+##asvalidation Modes
+asvalidation can be run in the following modes. Records without CDTs or detected errors are ignored. Records with detected errors are backed up unless otherwise specified. By default, no fixes are applied.
+
+* "Validation" mode discovers problems and produces a report.
+* "Fix" mode, triggered by the --cdt-fix-ordered-list-unique option, attempts to correct discovered problems where possible.
+You should probably run asvalidation first in validation mode to see the kinds of errors it discovers before running it in fix mode to fix them.
+
+##Options
+
+### Namespace data selection options
+
+| Option | Default | Description|
+|--------|---------|------------|
+| `-n NAMESPACE` or `--namespace NAMESPACE` | - | Namespace to backup. **Mandatory.** |
+| `-s SETS` or `--set SETS` | All sets | The set(s) to backup. May pass in a comma-separated list of sets to back up (version 3.6.1+). Starting with `asbackup` 3.9.0, server version 5.2 or later is required for multi-set backup. Note: multi-set backup cannot be used with `--filter-exp`. |
+| `-B  BIN1,BIN2,...` or `--bin-list BIN1,BIN2,...` | All bins | The bins to back up. |
+| `-M` or `--max-records N` | 0 = all records. | An approximate limit for the number of records to process. Available in server 4.9 and above. Note: this option is mutually exclusive to `--partition-list` and `--after-digest`. |
+
+### Connection options
+
+| Option                                                             | Default          | Description                                                                                                                                                                                                                                                                                                                                                                                                                          |
+|--------------------------------------------------------------------|------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `-h HOST1:TLSNAME1:PORT1,...` or `--host HOST1:TLSNAME1:PORT1,...` | 127.0.0.1        | The host that acts as the entry point to the cluster. Any nodes in the cluster can be specified. The remaining nodes are discovered automatically.                                                                                                                                                                                                                                                                       |
+| `-p PORT` or `--port PORT`                                         | 3000             | Port to connect to.                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `-U USER` or `--user USER`                                         | -                | User name with read permission. **Mandatory if the server has security enabled.**                                                                                                                                                                                                                                                                                                                                                    |
+| `-P PASSWORD` or `--password`                                      | -                | Password to authenticate the given user. The first form passes the password on the command line. The second form prompts for the password.                                                                                                                                                                                                                                                                                           |
+| `-A` or `--auth`                                                   | INTERNAL         | Set authentication mode when user and password are defined. Modes are (INTERNAL, EXTERNAL, EXTERNAL_INSECURE, PKI) and the default is INTERNAL. This mode must be set EXTERNAL when using LDAP.                                                                                                                                                                                                                                      |
+| `-l` or `--node-list ADDR1:TLSNAME1:PORT1,...`                     | `localhost:3000` | While `--host` and `--port` automatically discover all cluster nodes, `--node-list` backs up a subset of cluster nodes by first calculating the subset of partitions owned by the listed nodes, and then backing up that list of partitions. This option is mutually exclusive with [`--partition-list`](#partition-list) and [`--after-digest`](#after-specific-digest-for-resuming-incomplete-backup). |
+| `--parallel N`                                                     | 1                | Maximum number of scans to run in parallel. If only one partition range is given, or the entire namespace is being backed up, the range of partitions is evenly divided by this number to be processed in parallel. Otherwise, each filter cannot be parallelized individually, so you may only achieve as much parallelism as there are partition filters.                                                                |
+| `--tls-enable`                                                     | disabled         | Indicates a TLS connection should be used.                                                                                                                                                                                                                                                                                                                                                                                           |
+| `-S` or `--services-alternate`                                     | false            | Set this to `true` to connect to Aerospike node's [`alternate-access-address`](/server/reference/configuration#alternate-access-address).                     |
+| `--prefer-racks RACKID1,...`                                       | disabled         | A comma separated list of rack IDs to prefer when reading records for a backup. This is useful for limiting cross datacenter network traffic.                                                                                                                                                                                                                                                                       |
+
+### Output options
+
+| Option | Default | Description|
+|--------|---------|------------|
+| `-d PATH` or `--directory PATH` | - | Directory to store the `.asb` backup files in. If the directory does not exist, it will be created before use. **Mandatory, unless `--output-file` or `--estimate` is given.** |
+| `-o PATH` or `--output-file PATH` | - | The single file to write the backup to. `-` means `stdout`. **Mandatory, unless `--directory` or `--estimate` is given.** |
+| -q `DESIRED-PREFIX`<br /><br />or<br /><br />`--output-file-prefix DESIRED-PREFIX` |  | Must be used with the `--directory` option. A desired prefix for all output files. |
+| `-F LIMIT` or `--file-limit LIMIT` | 250 MiB | File size limit (in MiB) for `--directory`. If a `.asb` backup file crosses this size threshold, `asbackup` will switch to a new file. |
+| `-r` or `--remove-files` | - | Clear directory or remove output file. By default, `asbackup` refuses to write to a non-empty directory or to overwrite an existing backup file. This option clears the given `--directory` or removes an existing `--output-file`. Mutually exclusive to `--continue`. |
+| `--remove-artifacts` | - | Clear directory or remove output file, like `--remove-files`, without running a backup. This option is mutually exclusive to `--continue` and `--estimate`. |
+| `-N BANDWIDTH` or `--nice BANDWIDTH` | - | Throttles `asbackup`'s write operations to the backup file(s) to not exceed the given bandwidth in MiB/s. Effectively also throttles the scan on the server side as `asbackup` refuses to accept more data than it can write. |
+
+### Timeout options
+
+| Option | Default | Description|
+|--------|---------|------------|
+| `--socket-timeout MS` | 10000 | Socket timeout in milliseconds. If this value is 0, it is set to total-timeout. If both are 0, there is no socket idle time limit. |
+| `--total-timeout MS` | 0 | Total socket timeout in milliseconds. Default is 0, that is, no timeout. |
+| `--max-retries N` | 5 | Maximum number of retries before aborting the current transaction. |
+| `--sleep-between-retries MS` | 0 | The amount of time to sleep between retries. |
+
+### TLS options
+
+| Option | Default | Description|
+|--------|---------|------------|
+| `--tls-cafile=TLS_CAFILE` | | Path to a trusted CA certificate file. |
+| `--tls-capath=TLS_CAPATH` | | Path to a directory of trusted CA certificates. |
+| `--tls-name=TLS_NAME` | | The default TLS name used to authenticate each TLS socket connection. *Note: this must also match the cluster name.*|
+| `--tls-protocols=TLS_PROTOCOLS` | | Set the TLS protocol selection criteria. This format is the same as Apache's [SSL Protocol](https://httpd.apache.org/docs/2.4/mod/mod_ssl.html). If not specified, `asrestore` uses `TLSv1.2` if supported. Otherwise it uses `-all +TLSv1`. |
+| `--tls-cipher-suite=TLS_CIPHER_SUITE` | | Set the TLS cipher selection criteria. The format is the same as OpenSSL's [Cipher List Format](https://www.openssl.org/docs/man1.1.1/man1/ciphers.html). |
+| `--tls-keyfile=TLS_KEYFILE` | | Path to the key for mutual authentication (if Aerospike cluster supports it). |
+| `--tls-keyfile-password=TLS_KEYFILE_PASSWORD` | | Password to load protected TLS-keyfile. Can be one of the following:<br/>1) Environment variable: `env:VAR`<br/>2) File: `file:PATH`<br/>3) String: `PASSWORD`<br/>User will be prompted on command line if `--tls-keyfile-password` specified and no password is given. |
+| `--tls-certfile=TLS_CERTFILE  <path>` | | Path to the chain file for mutual authentication (if Aerospike Cluster supports it). |
+| `--tls-cert-blacklist <path>` | | Path to a certificate blocklist file. The file should contain one line for each blocklisted certificate. Each line starts with the certificate serial number expressed in hex. Each entry may optionally specify the issuer name of the certificate (serial numbers are only required to be unique per issuer). Example: `867EC87482B2 /C=US/ST=CA/O=Acme/OU=Engineering/CN=TestChainCA` |
+| `--tls-crl-check` | | Enable CRL checking for leaf certificate. An error occurs if a valid CRL files cannot be found in `TLS_CAPATH`. |
+| `--tls-crl-checkall` | | Enable CRL checking for entire certificate chain. An error occurs if a valid CRL files cannot be found in `TLS_CAPATH`. |
+| `--tls-log-session-info` | | Enable logging session information for each TLS connection. |
+
+`TLS_NAME` is only used when connecting with a secure TLS enabled server.
+
+### Backup resumption
+
+| Option | Default | Description|
+|--------|---------|------------|
+| `--continue STATE-FILE` | disabled | Enables the resumption of an interrupted backup from provided state file. All other command line arguments should match those used in the initial run (except `--remove-files`, which is mutually exclusive with `--continue`). |
+| `--state-file-dst` | see below | Specifies where to save the backup state file to. If this points to a directory, the state file is saved within the directory using the same naming convention as backup-to-directory state files. If this does not point to a directory, the path is treated as a path to the state file. |
+
+### Other options
+
+| Option | Default | Description|
+|--------|---------|------------|
+| `-v` or `--verbose` | disabled | Output considerably more information about the running backup. |
+| `-m` or `--machine PATH` | - | Output machine-readable status updates to the given path, typically a FIFO. |
+| `-L` or `--records-per-second RPS` | 0 | Available only for Aerospike Database 4.7 and later.<br /><br />Limit total returned records per second (RPS). If `RPS` is zero (the default), a records-per-second limit is not applied. |
 
 ## Output
 
@@ -41,6 +140,7 @@ A minimal set of options to run this tool.
 2020-01-06 22:12:28 GMT [INF] [24662]          0   Unfixable
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Has non-storage
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Corrupted
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Invalid Keys
 2020-01-06 22:12:28 GMT [INF] [24662]         10   Need Fix
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Fixed
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Fix failed
@@ -51,6 +151,7 @@ A minimal set of options to run this tool.
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Has duplicate keys
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Has non-storage
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Corrupted
+2020-01-06 22:12:28 GMT [INF] [24662]          0     Invalid Keys
 2020-01-06 22:12:28 GMT [INF] [24662]          0   Need Fix
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Fixed
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Fix failed
@@ -102,97 +203,6 @@ Then build the validation tools and generate the Doxygen documentation.
     make docs
 
 This provides `asvalidation` binary in the `bin` subdirectory -- as well as the Doxygen HTML documentation in `docs`. Open `docs/index.html` to access the generated documentation.
-
-## Validation Source Code
-
-Let's take a quick look at the overall structure of the `asvalidation` source code, at `src/backup.c`. The code does the following, starting at `main()`.
-
-  * Parse command line options into local variables or, if they need to be passed to a worker thread later, into a `backup_config` structure.
-  * Initialize an Aerospike client and connect it to the cluster to be validated.
-  * Create the counter thread, which starts at `counter_thread_func()`. That's the thread that outputs the status and counter updates during the validation, among other things.
-  * When backing up to a single file (`--output-file` option, as opposed to backing up to a directory using `--directory`), create and open that validation file.
-  * Populate a `backup_thread_args` structure for each node to be validated and submit it to the `job_queue` queue. Note two things:
-    - Only one of the `backup_thread_args` structures gets its `first` member set to `true`.
-    - When backing up to a single file, the `shared_fd` member gets the file handle of the created validation file (and `NULL` otherwise).
-  * Spawn validation worker threads, which start at `backup_thread_func()`. There's one of those for each cluster node to be validated.
-  * Wait for all validation worker threads to finish.
-  * When backing up to a single file, close that file.
-  * Shut down the Aerospike client.
-
-Let's now look at what the worker threads do, starting at `backup_thread_func()`.
-
-  * Pop a `backup_thread_args` structure off the job queue. The job queue contains exactly one of those for each thread.
-  * Initialize a `per_node_context` structure. That's where all the data local to a worker thread is kept. Some of the data is initialized from the `backup_thread_args` structure. In particular, when backing up to a single file, the `fd` member of the `per_node_context` structure is initialized from the `shared_fd` member of the `backup_thread_args` structure. In that way, all validation threads share the same validation file handle.
-  * When backing up to a directory, open an exclusive validation file for the worker thread by invoking `open_dir_file()`.
-  * If the validation thread is the single thread that has `first` set to `true` in its `backup_thread_args` structure, store secondary index definitions by invoking `process_secondary_indexes()`, and store UDF files by invoking `process_udfs()`. So, this work is done by a single thread, and that thread is chosen by setting its `first` member to `true`.
-  * All other threads wait for the chosen thread to finish its secondary index and UDF file work by invoking `wait_one_shot()`. The chosen thread signals completion by invoking `signal_one_shot()`.
-  * Initiate validation of records by invoking `aerospike_scan_node()` with `scan_callback()` as the callback function that gets invoked for each record in the namespace to be validated. From here on, all worker threads work in parallel.
-
-Let's now look at what the callback function, `scan_callback()`, does.
-
-  * When backing up to a directory and the current validation file of a worker thread has grown beyond its maximal size, switch to a new validation file by invoking `close_dir_file()` for the old and `open_dir_file()` for the new validation file.
-  * When backing up to a single file, acquire the file lock by invoking `safe_lock()`. As all worker threads share the same validation file, we can only allow one thread to write at a time.
-  * Invoke the `put_record()` function of the validation encoder for the current record. The encoder implements the validation file format by taking record information and serializing it to the validation file. Its code is in `src/enc_text.c`, its interface in `include/enc_text.h`. Besides `put_record()`, the interface contains `put_secondary_index()` and `put_udf_file()`, which are used to store secondary index definitions and UDF files in a validation file.
-  * When backing up to a single file, release the file lock.
-
-### Record Specifications
-
-A record specification defines the bins of a generated record, i.e., how many there are and what type of data they contain: a 50-character string, a 100-element list of integers, or something more deeply nested, such as a 100-element list of 50-element maps that map integer keys to 500-character string values.
-
-The available record specifications are read from a file, `spec.txt` by default. The format of the file is slightly Lisp-like. Each record specification has the following general structure.
-
-    (record "{spec-id}"
-        {bin-count-1} {bin-type-1}
-        {bin-count-2} {bin-type-2}
-        ...)
-
-This declares a record specification that can be accessed under the unique identifier `{spec-id}`. It defines a record that has `{bin-count-1}`-many bins with data of type `{bin-type-1}`, `{bin-count-2}`-many bins with data of type `{bin-type-2}`, etc.
-
-Accordingly, the `{bin-count-x}` placeholders are just integer values. The `{bin-type-x}` placeholders, on the other hand, are a little more complex. They have to be able to describe nested data types. They have one of six forms.
-
-| `{bin-type-x}` | Semantics |
-|----------------|-----------|
-| `(integer)`    | A 64-bit integer value. |
-| `(double)`     | A 64-bit floating-point value |
-| `(string {length})` | A string value of the given length. |
-| `(list {length} {element-type})` | A list of the given length, whose elements are of the given type. This type can then again have one of these six forms. |
-| `(map {size} {key-type} {value-type})` | A map of the given size, whose keys and values are of the given types. These types can then again have one of these six forms. |
-
-Let's reconsider the above examples: a 50-character string, a 100-element list of integers, and a 100-element list of 50-element maps that map integer keys to 500-character string values. Let's specify a record that has 1, 3, and 5 bins of those types, respectively.
-
-    (record "example"
-        1 (string 50)
-        3 (list 100 (integer))
-        5 (list 100 (map 50 (integer) (string 500))))
-
-### Fill Source Code
-
-The specification file is parsed by a Ragel (http://www.colm.net/open-source/ragel/) parser. The state machine for the parser is in `src/spec.rl`. Ragel automatically generates the C parser code from this file. Not everybody has Ragel installed, so the auto-generated C file, `src/spec.c`, is included in the Git repository. If you want to re-generate `spec.c` from `spec.rl`, do the following.
-
-    make ragel
-
-The parser interfaces with the rest of the code via a single function, parse(). This parses the specification file into a linked list of record specifications (@ref rec_node). Each record specification points to a linked list of bin specifications (@ref bin_node), each of which, in turn, says how many bins to add to the record and with which data type. The data type is given by a tree of @ref type_node. See the documentation of spec.h and the `struct` types declared there for more information.
-
-In its most basic form, the `fill` command could be invoked as follows, for example.
-
-    fill test-ns test-set 1000 test-spec-1 2000 test-spec-2 3000 test-spec-3
-
-This would add a total of 6,000 records to set `test-set` in namespace `test-ns`: 1,000 records based on `test-spec-1`, 2,000 records based on `test-spec-2`, and 3,000 records based on `test-spec-3`.
-
-The three (count, record specification) pairs -- (1000, "test-spec-1"), (2000, "test-spec-2"), (3000, "test-spec-3") -- are parsed into a linked list of _fill jobs_ (@ref job_node). The code then iterates through this list and invokes fill() for each job.
-
-The fill() function fires up the worker threads and then just sits there and prints progress information until the worker threads are all done.
-
-The worker threads start at the fill_worker() function. This function generates records according to the given record specification (create_record()), generates a key (init_key()), and puts the generated record in the given set in the given namespace using the generated key. The individual bin values are created by generate(), which recurses in the case of nested data types. Please consult the documentation for fill.c for more details on the code.
-
-The following options to `fill` are probably non-obvious.
-
-| Option             | Effect |
-|--------------------|--------|
-| `-k {key-type}`    | By default, we randomly pick an integer key, a string key, or a bytes key for each record. Specifying `integer`, `string`, or `bytes` as the `{key-type}` forces a random key of the given type to be created instead. |
-| `-c {tps-ceiling}` | Limits the total number of records put per second by the `fill` tool (TPS) to the given ceiling. Handy to prevent server overload. |
-| `-b`               | Enables benchmark mode, which speeds up the `fill` tool. In benchmark mode we generate just one single record for a fill job and repeatedly put this same record with different keys; all records of a job thus contain identical data. Without benchmark mode, each record to be put is re-generated from scratch, which results in unique data in each record. |
-| `-z`               | Enables fuzzing. Fuzzing uses random junk data for bin names, string and BLOB bin values, etc. in order to try to trip the validation file format parser. |
 
 ## Validation File Format
 
