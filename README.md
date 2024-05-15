@@ -1,7 +1,7 @@
 # Aerospike Validation Tool
 
-This tool scans all records in a namespace and validates bins with Complex Data
-Type (CDT) values, optionally attempting to repair any damage detected.
+This tool scans all records in a namespace and validates bins with Collection Data
+Type (CDT) values (List and Map bins), optionally attempting to repair any damage detected.
 Records with unrecoverable CDT errors are written to output if an output file is
 specified. Records without CDTs or detected errors are ignored.
 
