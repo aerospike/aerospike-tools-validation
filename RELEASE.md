@@ -11,3 +11,6 @@
 * [TOOLS-2916] - (ASVALIDATION) Replace Centos 8 with RHEL 8.
 * [TOOLS-2917] - (ASVALIDATION) Remove support for deprecated Debian 8.
 * [TOOLS-2924] - (ASVALIDATION) Updated to the Aerospike C Client Library 6.6.1.
+
+## Bug Fixes
+* [TOOLS-2954] - (ASVALIDATION) Fix map-key dup checking for unordered maps.
