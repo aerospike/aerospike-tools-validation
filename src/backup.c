@@ -519,7 +519,7 @@ cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
 	};
 
 	// Simple O(n^2 / 2) check for dup keys.
-	for (uint32_t i = 0; i < ele_count - 1; i++) {
+	for (uint32_t i = 1; i < ele_count; i++) {
 		uint32_t cur_off = mp.offset;
 
 		msgpack_sz_rep(&mp, 2);
@@ -527,12 +527,14 @@ cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
 		uint32_t next_off = mp.offset;
 		msgpack_in rhs = mp;
 
-		for (uint32_t j = i + 1; j < ele_count; j++) {
+		for (uint32_t j = i; j < ele_count; j++) {
 			mp.offset = cur_off;
 
 			if (msgpack_cmp(&mp, &rhs) == MSGPACK_CMP_EQUAL) {
 				return true;
 			}
+
+			msgpack_sz(&rhs);
 		}
 
 		mp.offset = next_off;
