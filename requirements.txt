@@ -1,3 +1,0 @@
-aerospike
-pytest
-pylint
