@@ -58,66 +58,6 @@ You should probably run asvalidation first in validation mode to see the kinds o
 | `-B  BIN1,BIN2,...` or `--bin-list BIN1,BIN2,...` | All bins | The bins to validate. |
 | `-M` or `--max-records N` | 0 = all records. | An approximate limit for the number of records to process. Available in server 4.9 and above. Note: this option is mutually exclusive to `--partition-list` and `--after-digest`. |
 
-
-### Partition scanning validation options
-
-#### Partition list
-
-`-X, --partition-list LIST`
-Scan a list of partition filters. Partition filters can be ranges, individual partitions, or records after a specific digest within a single partition.
-
-This option is mutually exclusive with the `-D`, `--after-digest` option described in [After specific digest](#after-specific-digest), `--node-list`, and `--max-records`.
-
-Default number of partitions to scan: 0 to 4095: all partitions.
-
-- `LIST` format: `FILTER1,FILTER2,...`
-- `FILTER` format: `BEGIN-PARTITION -PARTITION-COUNT|DIGEST`
-  - `BEGIN-PARTITION`: 0 to 4095.
-  - Either the optional `PARTITION-COUNT`: 1 to 4096. Default: 1
-  - Or the optional `DIGEST`: Base64-encoded string of desired digest to start at in specified partition.
-
-:::note
-When using multiple partition filters, each partition filter is a single scan call and cannot be parallelized with the `parallel` option. 
-To have more parallelizability, you can either break up the partition filters, or run a validation using only one partition filter.
-:::
-
-When validating only a single partition range, the range is automatically divided into `parallel` segments of near-equal size, each of which is validated in parallel.
-
-**Examples**
-
-`-X 361`
-- Validate only partition 361
-
-`-X 361,529,841`
-- Validate partitions 361, 529, and 841
-
-`-X 361-10`
-- Validate 10 partitions, starting with 361 and including 370.
-
-`-X VSmeSvxNRqr46NbOqiy9gy5LTIc=`
-- Validate all records after the digest `VSmeSvxNRqr46NbOqiy9gy5LTIc=` in its partition (which in this case is partition 2389)
-
-`-X 0-1000,2222,EjRWeJq83vEjRRI0VniavN7xI0U=`
-
-- Validate partitions 0 to 999 (1000 partitions starting from 0)
-- Then validate partition 2222
-- Then validate all records after the digest `EjRWeJq83vEjRRI0VniavN7xI0U=` in its partition
-
-
-#### After specific digest
-
-`-D` , `--after-digest DIGEST`
-Validate records after the specified record digest in that record's partition and all succeeding partitions.
-
-This option is mutually exclusive with the `-X`, `--partition-list` option described in [Partition filter](#partition-list), `--max-records`, and `--node-list`.
-
-- `DIGEST` format: Base64-encoded string of desired digest.
-  This is the same encoding used for the output of digests, so you can copy-and-paste digest identifiers from validation files to use as the command-line argument with `-D`.
-
-**Example**
-
-`-D EjRWeJq83vEjRRI0VniavN7xI0U=`
-
 ### Connection options
 
 | Option                                                             | Default          | Description                                                                                                                                                                                                                                                                                                                                                                                                                          |
