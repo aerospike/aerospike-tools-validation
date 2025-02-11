@@ -1225,7 +1225,6 @@ backup_thread_func(void *cont)
 						ae.code, ae.message, ae.file, ae.line);
 			}
 
-			stop = true;
 			goto close_file;
 		}
 
