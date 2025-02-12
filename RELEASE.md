@@ -1,2 +1,2 @@
 ## Bug Fixes
-* [TOOLS-2954] - (ASVALIDATION) Fix map-key dup checking for unordered maps.
+* [TOOLS-3007] - Continue validation on scan error.
