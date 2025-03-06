@@ -18,6 +18,7 @@ container:
       - docker.qe.aerospike.com/build/aerospike-tools-alt:ubuntu-18.04
       - docker.qe.aerospike.com/build/aerospike-tools-alt:ubuntu-20.04
       - docker.qe.aerospike.com/build/aerospike-tools-alt:ubuntu-22.04
+      - docker.qe.aerospike.com/build/aerospike-tools-alt:ubuntu-24.04
 
       - docker.qe.aerospike.com/build/aerospike-tools-alt:arm-rhel-8
       - docker.qe.aerospike.com/build/aerospike-tools-alt:arm-rhel-9
@@ -27,6 +28,7 @@ container:
       # - docker.qe.aerospike.com/build/aerospike-tools-alt:arm-ubuntu-18.04
       - docker.qe.aerospike.com/build/aerospike-tools-alt:arm-ubuntu-20.04
       - docker.qe.aerospike.com/build/aerospike-tools-alt:arm-ubuntu-22.04
+      - docker.qe.aerospike.com/build/aerospike-tools-alt:arm-ubuntu-24.04
 
 build:
   - name: default
