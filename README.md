@@ -28,7 +28,7 @@ A minimal set of options to run this tool.
 | -n | Namespace |
 | -o | Output File Name |
 | -d | Output Directory |
-| --help | Get a comprehensive list of options for tool |
+| `-o` or `--options` or `--help` or `-Z` or `--usage` | Get a comprehensive list of options for tool |
 
 ## Descriptions of possible corruption reasons
 |Reason|Description|Disposition|
@@ -67,6 +67,7 @@ You should probably run asvalidation first in validation mode to see the kinds o
 | `-P PASSWORD` or `--password`                                      | -                | Password to authenticate the given user. The first form passes the password on the command line. The second form prompts for the password.                                                                                                                                                                                                                                                                                           |
 | `-A` or `--auth`                                                   | INTERNAL         | Set authentication mode when user and password are defined. Modes are (INTERNAL, EXTERNAL, EXTERNAL_INSECURE, PKI) and the default is INTERNAL. This mode must be set EXTERNAL when using LDAP.                                                                                                                                                                                                                                      |
 | `--parallel N`                                                     | 1                | Maximum number of scans to run in parallel. If only one partition range is given, or the entire namespace is being validated, the range of partitions is evenly divided by this number to be processed in parallel. Otherwise, each filter cannot be parallelized individually, so you may only achieve as much parallelism as there are partition filters.                                                                |
+| `-l HOST1:[TLSNAME1:]PORT1,...` or `--node-list HOST1:[TLSNAME1:]PORT1,...` | -       | Validate the given cluster nodes only.                                           |
 | `--tls-enable`                                                     | disabled         | Indicates a TLS connection should be used.                                                                                                                                                                                                                                                                                                                                                                                           |
 | `-S` or `--services-alternate`                                     | false            | Set this to `true` to connect to Aerospike node's [`alternate-access-address`](https://aerospike.com/docs/server/reference/configuration?context=all&version=7#network__alternate-access-address).                     |
 | `--prefer-racks RACKID1,...`                                       | disabled         | A comma separated list of rack IDs to prefer when reading records. This is useful for limiting cross datacenter network traffic.                                                                                                                                                                                                                                                                       |
@@ -125,6 +126,20 @@ You should probably run asvalidation first in validation mode to see the kinds o
 | `-v` or `--verbose` | disabled | Output considerably more information about the running validation. |
 | `-m` or `--machine PATH` | - | Output machine-readable status updates to the given path, typically a FIFO. |
 | `-L` or `--records-per-second RPS` | 0 | Available only for Aerospike Database 4.7 and later.<br /><br />Limit total returned records per second (RPS). If `RPS` is zero (the default), a records-per-second limit is not applied. |
+| -V or --version | - | Print ASVALIDATION version information. |
+| -C or --compact | disabled | Do not apply base-64 encoding to BLOBs; results in smaller output files. |
+
+### Configuration File Options
+| Option | Default | Description|
+|--------|---------|------------|
+| --no-config-file | disabled | Do not read any config file. |
+| --instance NAME | - | Section with this instance is read. e.g. in case instance a is specified, sections cluster_a, asvalidation_a is read. |
+| --config-file PATH | - | Read this file after default configuration file. |
+| --only-config-file PATH | - | Read only this configuration file. |
+
+Default configuration files are read from the following files in the given order:
+* /etc/aerospike/astools.conf
+* ~/.aerospike/astools.conf
 
 ## Output
 
