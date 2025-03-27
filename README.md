@@ -28,7 +28,7 @@ A minimal set of options to run this tool.
 | -n | Namespace |
 | -o | Output File Name |
 | -d | Output Directory |
-| --help | Get a comprehensive list of options for tool |
+| `-o` or `--options` or `--help` or `-Z` or `--usage` | Get a comprehensive list of options for tool |
 
 ## Descriptions of possible corruption reasons
 |Reason|Description|Disposition|
@@ -126,6 +126,20 @@ You should probably run asvalidation first in validation mode to see the kinds o
 | `-v` or `--verbose` | disabled | Output considerably more information about the running validation. |
 | `-m` or `--machine PATH` | - | Output machine-readable status updates to the given path, typically a FIFO. |
 | `-L` or `--records-per-second RPS` | 0 | Available only for Aerospike Database 4.7 and later.<br /><br />Limit total returned records per second (RPS). If `RPS` is zero (the default), a records-per-second limit is not applied. |
+| -V or --version | - | Print ASVALIDATION version information. |
+| -C or --compact | disabled | Do not apply base-64 encoding to BLOBs; results in smaller output files. |
+
+### Configuration File Options
+| Option | Default | Description|
+|--------|---------|------------|
+| --no-config-file | disabled | Do not read any config file. |
+| --instance NAME | - | Section with this instance is read. e.g. in case instance a is specified, sections cluster_a, asvalidation_a is read. |
+| --config-file PATH | - | Read this file after default configuration file. |
+| --only-config-file PATH | - | Read only this configuration file. |
+
+Default configuration files are read from the following files in the given order:
+* /etc/aerospike/astools.conf
+* ~/.aerospike/astools.conf
 
 ## Output
 
