@@ -77,12 +77,9 @@ Default number of partitions to scan: 0 to 4095: all partitions.
   - Either the optional `PARTITION-COUNT`: 1 to 4096. Default: 1
   - Or the optional `DIGEST`: Base64-encoded string of desired digest to start at in specified partition.
 
-:::note
-When using multiple partition filters, each partition filter is a single scan call and cannot be parallelized with the `parallel` option. 
-To have more parallelizability, you can either break up the partition filters, or run a validation using only one partition filter.
-:::
-
-When validating only a single partition range, the range is automatically divided into `parallel` segments of near-equal size, each of which is validated in parallel.
+> [!NOTE]
+> Each partition filters operate as single scan call and cannot be parallelized using the `parallel` option. 
+> To increase parallelism, divide the range into multiple partition filters.
 
 **Examples**
 
