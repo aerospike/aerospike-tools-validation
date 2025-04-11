@@ -57,6 +57,50 @@ You should probably run asvalidation first in validation mode to see the kinds o
 | `-s SETS` or `--set SETS` | All sets | The set(s) to validate. May pass in a comma-separated list of sets to validate.|
 | `-B  BIN1,BIN2,...` or `--bin-list BIN1,BIN2,...` | All bins | The bins to validate. |
 
+### Partition scanning validation options
+
+#### Partition list
+
+| Option | Default |
+|--------|---------|
+|`-X, --partition-list LIST`| Not used. |
+
+Scan a list of partition filters. Partition filters can be ranges, individual partitions, or records after a specific digest within a single partition.
+
+This option is mutually exclusive with `--node-list`.
+
+Default number of partitions to scan: 0 to 4095: all partitions.
+
+- `LIST` format: `FILTER1,FILTER2,...`
+- `FILTER` format: `BEGIN-PARTITION -PARTITION-COUNT|DIGEST`
+  - `BEGIN-PARTITION`: 0 to 4095.
+  - Either the optional `PARTITION-COUNT`: 1 to 4096. Default: 1
+  - Or the optional `DIGEST`: Base64-encoded string of desired digest to start at in specified partition.
+
+> [!NOTE]
+> Each partition filters operate as single scan call and cannot be parallelized using the `parallel` option. 
+> To increase parallelism, divide the range into multiple partition filters.
+
+**Examples**
+
+`-X 361`
+- Validate only partition 361
+
+`-X 361,529,841`
+- Validate partitions 361, 529, and 841
+
+`-X 361-10`
+- Validate 10 partitions, starting with 361 and including 370.
+
+`-X VSmeSvxNRqr46NbOqiy9gy5LTIc=`
+- Validate all records after the digest `VSmeSvxNRqr46NbOqiy9gy5LTIc=` in its partition (which in this case is partition 2389)
+
+`-X 0-1000,2222,EjRWeJq83vEjRRI0VniavN7xI0U=`
+
+- Validate partitions 0 to 999 (1000 partitions starting from 0)
+- Then validate partition 2222
+- Then validate all records after the digest `EjRWeJq83vEjRRI0VniavN7xI0U=` in its partition
+
 ### Connection options
 
 | Option                                                             | Default          | Description                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -67,8 +111,8 @@ You should probably run asvalidation first in validation mode to see the kinds o
 | `-P PASSWORD` or `--password`                                      | -                | Password to authenticate the given user. The first form passes the password on the command line. The second form prompts for the password.                                                                                                                                                                                                                                                                                           |
 | `-A` or `--auth`                                                   | INTERNAL         | Set authentication mode when user and password are defined. Modes are (INTERNAL, EXTERNAL, EXTERNAL_INSECURE, PKI) and the default is INTERNAL. This mode must be set EXTERNAL when using LDAP.                                                                                                                                                                                                                                      |
 | `--parallel N`                                                     | 1                | Maximum number of scans to run in parallel. If only one partition range is given, or the entire namespace is being validated, the range of partitions is evenly divided by this number to be processed in parallel. Otherwise, each filter cannot be parallelized individually, so you may only achieve as much parallelism as there are partition filters.                                                                |
-| `-l HOST1:[TLSNAME1:]PORT1,...` or `--node-list HOST1:[TLSNAME1:]PORT1,...` | -       | Validate the given cluster nodes only.                                           |
-| `--tls-enable`                                                     | disabled         | Indicates a TLS connection should be used.                                                                                                                                                                                                                                                                                                                                                                                           |
+| `-l HOST1:[TLSNAME1:]PORT1,...` or `--node-list HOST1:[TLSNAME1:]PORT1,...` | -       | Validate the given cluster nodes only. Mutually exclusive with [`--partition-list`](#partition-list). |
+| `--tls-enable`                                                     | disabled         | Indicates a TLS connection should be used. |
 | `-S` or `--services-alternate`                                     | false            | Set this to `true` to connect to Aerospike node's [`alternate-access-address`](https://aerospike.com/docs/server/reference/configuration?context=all&version=7#network__alternate-access-address).                     |
 | `--prefer-racks RACKID1,...`                                       | disabled         | A comma separated list of rack IDs to prefer when reading records. This is useful for limiting cross datacenter network traffic.                                                                                                                                                                                                                                                                       |
 

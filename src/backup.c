@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2024 Aerospike, Inc.
+ * Copyright 2015-2025 Aerospike, Inc.
  *
  * Portions may be licensed to Aerospike, Inc. under one or more contributor
  * license agreements.
@@ -15,6 +15,10 @@
  * the License.
  */
 
+//==========================================================
+// Includes.
+//
+
 #include <stdbool.h>
 
 #include <backup.h>
@@ -26,6 +30,11 @@
 
 #include <aerospike/as_atomic.h>
 #include <aerospike/as_msgpack.h>
+
+
+//==========================================================
+// Typedefs & constants.
+//
 
 #define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_SEQ_CST)
 #define atomic_add(_target, _value) __atomic_add_fetch(_target, _value, __ATOMIC_SEQ_CST)
@@ -41,7 +50,16 @@ static pthread_cond_t bandwidth_cond = PTHREAD_COND_INITIALIZER;    ///< Used by
                                                                     ///  bandwidth to the backup
                                                                     ///  threads.
 
-static void config_default(backup_config *conf);
+
+//==========================================================
+// Forward Declarations.
+//
+
+static void config_default(backup_config* conf);
+
+static bool parse_partition_range(char* str, as_partition_filter* range);
+static bool parse_digest(const char* str, as_partition_filter* filter);
+static bool parse_partition_list(char* partition_str, as_vector* filters_v);
 
 ///
 /// Ensures that there is enough disk space available. Outputs a warning, if there isn't.
@@ -1214,10 +1232,19 @@ backup_thread_func(void *cont)
 		}
 
 		as_error ae;
+		as_status status;
 
-		if (aerospike_scan_node(pnc.conf->as, &ae, pnc.conf->policy,
-				pnc.conf->scan, pnc.node_name, scan_callback, &pnc) !=
-						AEROSPIKE_OK) {
+		if (args.use_partition_filter) {
+			status = aerospike_scan_partitions(pnc.conf->as, &ae,
+					pnc.conf->policy, pnc.conf->scan, &args.filter,
+					scan_callback, &pnc);
+		}
+		else {
+			status = aerospike_scan_node(pnc.conf->as, &ae, pnc.conf->policy,
+					pnc.conf->scan, pnc.node_name, scan_callback, &pnc);
+		}
+
+		if (status != AEROSPIKE_OK) {
 			if (ae.code == AEROSPIKE_OK) {
 				inf("Node scan for %s aborted", pnc.node_name);
 			} else {
@@ -1519,6 +1546,175 @@ clean_directory(const char *dir_path, bool clear)
 	}
 
 	inf("Directory %s prepared for output", dir_path);
+	return true;
+}
+
+/*
+ * Sort partition ranges and detect overlap.
+ */
+static bool
+sort_partition_filters(as_vector *partition_filters)
+{
+	// Use insertion sort because ranges will likely already be in sorted order.
+	as_partition_filter* list = (as_partition_filter*)partition_filters->list;
+	int size = (int)partition_filters->size;
+	int i, j;
+	as_partition_filter key;
+
+	for (i = 1; i < size; i++) {
+		key = list[i];
+		j = i - 1;
+
+		while (j >= 0 && list[j].begin > key.begin) {
+			list[j + 1] = list[j];
+			j = j - 1;
+		}
+		list[j + 1] = key;
+	}
+
+	// Check for overlap.
+	for (i = 1; i < size; i++) {
+		as_partition_filter* prev = &list[i - 1];
+
+		if (prev->begin + prev->count > list[i].begin) {
+			return false;  // overlap
+		}
+	}
+
+	return true; // no overlap
+}
+
+/*
+ * Parse partition range string in format.
+ *
+ *  range: <begin partition>[-<partition count>]
+ *  begin partition: 0 - 4095
+ *  partition count: 1 - 4096  Default: 1
+ *
+ * Example: 1000-10
+ */
+static bool
+parse_partition_range(char *str, as_partition_filter *range)
+{
+	char *p = strchr(str, '-');
+	uint64_t begin = 0;
+	uint64_t count = 1;
+	bool rv = false;
+
+	if (p != NULL) {
+		*p++ = 0;
+	}
+
+	if (better_atoi(str, &begin) && begin < MAX_PARTITIONS) {
+		if (p != NULL) {
+			rv = better_atoi(p, &count) && (begin + count) <= MAX_PARTITIONS;
+		}
+		else {
+			rv = true;
+		}
+	}
+
+	if (rv) {
+		as_partition_filter_set_range(range, (uint32_t)begin, (uint32_t)count);
+		return true;
+	}
+
+	// Restore dash.
+	if (p) {
+		p--;
+		*p = '-';
+	}
+
+	return false;
+}
+
+/*
+ * Parse digest string in base64 format.
+ *
+ * Example: EjRWeJq83vEjRRI0VniavN7xI0U=
+ */
+static bool
+parse_digest(const char* str, as_partition_filter* filter)
+{
+	uint32_t len = (uint32_t)strlen(str);
+	uint8_t* bytes = (uint8_t*)alloca(cf_b64_decoded_buf_size(len));
+	uint32_t size;
+	uint32_t partition_id;
+
+	if (! cf_b64_validate_and_decode(str, len, bytes, &size)) {
+		return false;
+	}
+
+	if (size != sizeof(as_digest_value)) {
+		return false;
+	}
+
+	partition_id = as_partition_getid(filter->digest.value, MAX_PARTITIONS);
+	// used only when sorting partition ranges to verify no overlap, the c
+	// client will not use this value
+	as_partition_filter_set_id(filter, partition_id);
+	memcpy(filter->digest.value, bytes, size);
+	filter->digest.init = true;
+
+	return true;
+}
+
+/*
+ * Parse partition list string filters.
+ *
+ *	Format: <filter1>[,<filter2>][,...]
+ *  filter: <begin partition>[-<partition count>]|<digest>
+ *  begin partition: 0-4095
+ *  partition count: 1-4096 Default: 1
+ *  digest: base64 encoded string.
+ *         This digest only includes records within the digest's partition,
+ *         while the --after-digest argument includes both the digest's
+ *         partition and every partition after the digest's partition.
+ *
+ * Example: 0-1000,1000-1000,2222,EjRWeJq83vEjRRI0VniavN7xI0U=
+ */
+static bool
+parse_partition_list(char* partition_str, as_vector* filters_v)
+{
+	if (partition_str[0] == 0) {
+		err("Empty partition list");
+		return false;
+	}
+
+	as_vector f_strs_v;
+
+	as_vector_inita(&f_strs_v, sizeof(char*), 100);
+	split_string(partition_str, ',', true, &f_strs_v);
+	as_vector_init(filters_v, sizeof(as_partition_filter), f_strs_v.size);
+
+	as_partition_filter filter;
+
+	for (uint32_t i = 0; i < f_strs_v.size; i++) {
+		char* str = as_vector_get_ptr(&f_strs_v, i);
+
+		if (parse_partition_range(str, &filter) || parse_digest(str, &filter)) {
+			as_vector_append(filters_v, &filter);
+		}
+		else {
+			err("Invalid partition filter '%s'", str);
+			err("format: <filter1>[,<filter2>][,...]");
+			err("filter: <begin partition>[-<partition count>]|<digest>");
+			err("begin partition: 0-4095");
+			err("partition count: 1-4096 Default: 1");
+			err("digest: base64 encoded string");
+			as_vector_destroy(&f_strs_v);
+
+			return false;
+		}
+	}
+
+	as_vector_destroy(&f_strs_v);
+
+	if (! sort_partition_filters(filters_v)) {
+		err("Range overlap in partition list '%s'", partition_str);
+		return false;
+	}
+
 	return true;
 }
 
@@ -2102,6 +2298,18 @@ usage(const char *name)
 	fprintf(stderr, "                      <IP addr 1>:<TLS_NAME 1>:<port 1>[,<IP addr 2>:<TLS_NAME 2>:<port 2>[,...]]\n");
 	fprintf(stderr, "                      Validate the given cluster nodes only. Default: validate the \n");
 	fprintf(stderr, "                      whole cluster.\n");
+	fprintf(stderr, "  -X, --partition-list <filter[,<filter>[...]]>\n");
+	fprintf(stderr, "                      List of partitions to back up. Partition filters can be ranges, individual partitions, or \n");
+	fprintf(stderr, "                      records after a specific digest within a single partition.\n");
+	fprintf(stderr, "                      Note: each partition filter is an individual task which cannot be parallelized, so you can only\n");
+	fprintf(stderr, "                      achieve as much parallelism as there are partition filters. You may increase parallelism by dividing up\n");
+	fprintf(stderr, "                      partition ranges manually.\n");
+	fprintf(stderr, "                      Filter: <begin partition>[-<partition count>]|<digest>\n");
+	fprintf(stderr, "                      begin partition: 0-4095\n");
+	fprintf(stderr, "                      partition count: 1-4096 Default: 1\n");
+	fprintf(stderr, "                      digest: base64 encoded string\n");
+	fprintf(stderr, "                      Examples: 0-1000, 1000-1000, 2222, EjRWeJq83vEjRRI0VniavN7xI0U=\n");
+	fprintf(stderr, "                      Default: 0-4096 (all partitions)\n");
 	fprintf(stderr, "  -m, --machine <path>\n");
 	fprintf(stderr, "                      Output machine-readable status updates to the given path, \n");
 	fprintf(stderr,"                       typically a FIFO.\n");
@@ -2187,6 +2395,7 @@ main(int32_t argc, char **argv)
 		{ "output-file", required_argument, NULL, 'o' },
 		{ "file-limit", required_argument, NULL, 'F' },
 		{ "remove-files", no_argument, NULL, 'r' },
+		{ "partition-filter", required_argument, NULL, 'X' },
 		{ "node-list", required_argument, NULL, 'l' },
 		{ "records-per-second", required_argument, NULL, 'L' },
 		{ "machine", required_argument, NULL, 'm' },
@@ -2379,6 +2588,10 @@ main(int32_t argc, char **argv)
 			conf.bin_list = safe_strdup(optarg);
 			break;
 
+		case 'X':
+			conf.partition_str = safe_strdup(optarg);
+			break;
+
 		case 'w':
 			if (! better_atoi(optarg, &tmp) || tmp < 1 || tmp > MAX_PARALLEL) {
 				err("Invalid parallelism value %s", optarg);
@@ -2527,6 +2740,11 @@ main(int32_t argc, char **argv)
 		goto cleanup1;
 	}
 
+	if (conf.node_list != NULL && conf.partition_str != NULL) {
+		err("node-list is mutually exclusive with partition-list");
+		goto cleanup1;
+	}
+
 	node_spec *node_specs = NULL;
 	uint32_t n_node_specs = 0;
 
@@ -2535,7 +2753,7 @@ main(int32_t argc, char **argv)
 			ver("Parsing node list %s", conf.node_list);
 		}
 
-		if (!parse_node_list(conf.node_list, &node_specs, &n_node_specs)) {
+		if (! parse_node_list(conf.node_list, &node_specs, &n_node_specs)) {
 			err("Error while parsing node list");
 			goto cleanup2;
 		}
@@ -2558,6 +2776,16 @@ main(int32_t argc, char **argv)
 				cf_free(node_specs[i].tls_name_str);
 				node_specs[i].tls_name_str = NULL;
 			}
+		}
+	}
+	else if (conf.partition_str != NULL) {
+		if (verbose) {
+			ver("Parsing partition-list '%s'", conf.partition_str);
+		}
+
+		if (! parse_partition_list(conf.partition_str, &conf.filters_v)) {
+			err("Error while parsing partition-list '%s'", conf.partition_str);
+			goto cleanup1;
 		}
 	}
 
@@ -2724,12 +2952,39 @@ main(int32_t argc, char **argv)
 		ver("Pushing %u job(s) to job queue", n_node_names);
 	}
 
-	for (uint32_t i = 0; i < n_node_names; ++i) {
-		memcpy(backup_args.node_name, (*node_names)[i], AS_NODE_NAME_SIZE);
+	if (conf.filters_v.size > 0) {
+		// Create backup task for every partition filter.
+		memset(backup_args.node_name, 0, AS_NODE_NAME_SIZE);
+		backup_args.use_partition_filter = true;
 
-		if (cf_queue_push(job_queue, &backup_args) != CF_QUEUE_OK) {
-			err("Error while queueing validation job");
-			goto cleanup8;
+		as_vector* v = &conf.filters_v;
+
+		for (uint32_t i = 0; i < v->size; i++) {
+			as_partition_filter* f = as_vector_get(&conf.filters_v, i);
+
+			memcpy(&backup_args.filter, f, sizeof(as_partition_filter));
+			snprintf(backup_args.node_name, AS_NODE_NAME_SIZE, "PR%u:%u:%u",
+					i, f->begin, f->count);
+
+			if (cf_queue_push(job_queue, &backup_args) != CF_QUEUE_OK) {
+				err("Error while queueing backup job");
+				goto cleanup8;
+			}
+		}
+
+		as_vector_destroy(&conf.filters_v);
+	}
+	else {
+		// Create backup task for every node.
+		backup_args.use_partition_filter = false;
+
+		for (uint32_t i = 0; i < n_node_names; ++i) {
+			memcpy(backup_args.node_name, (*node_names)[i], AS_NODE_NAME_SIZE);
+
+			if (cf_queue_push(job_queue, &backup_args) != CF_QUEUE_OK) {
+				err("Error while queueing backup job");
+				goto cleanup8;
+			}
 		}
 	}
 
@@ -2874,10 +3129,11 @@ config_default(backup_config *conf)
 	conf->user = NULL;
 	conf->password = DEFAULTPASSWORD;
 	conf->auth_mode = NULL;
-
 	conf->remove_files = false;
 	conf->bin_list = NULL;
 	conf->node_list = NULL;
+	conf->partition_str = NULL;
+	memset(&conf->filters_v, 0, sizeof(as_vector));
 	conf->directory = NULL;
 	conf->output_file = NULL;
 	conf->compact = false;
