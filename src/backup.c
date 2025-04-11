@@ -2301,7 +2301,6 @@ usage(const char *name)
 	fprintf(stderr, "  -X, --partition-list <filter[,<filter>[...]]>\n");
 	fprintf(stderr, "                      List of partitions to back up. Partition filters can be ranges, individual partitions, or \n");
 	fprintf(stderr, "                      records after a specific digest within a single partition.\n");
-	fprintf(stderr, "                      This argument is mutually exclusive to after-digest.\n");
 	fprintf(stderr, "                      Note: each partition filter is an individual task which cannot be parallelized, so you can only\n");
 	fprintf(stderr, "                      achieve as much parallelism as there are partition filters. You may increase parallelism by dividing up\n");
 	fprintf(stderr, "                      partition ranges manually.\n");

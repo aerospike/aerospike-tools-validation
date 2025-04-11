@@ -113,9 +113,7 @@ typedef struct {
 	                                    ///  raise the limit according to the bandwidth limit.
 	char* auth_mode;					///< Authentication mode
 
-	// String containing partition range
 	char* partition_str;
-	//as_partition_filter p_filter;
 	as_vector filters_v;
 
 	bool cdt_fix;
