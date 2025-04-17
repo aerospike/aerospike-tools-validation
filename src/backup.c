@@ -2395,7 +2395,7 @@ main(int32_t argc, char **argv)
 		{ "output-file", required_argument, NULL, 'o' },
 		{ "file-limit", required_argument, NULL, 'F' },
 		{ "remove-files", no_argument, NULL, 'r' },
-		{ "partition-filter", required_argument, NULL, 'X' },
+		{ "partition-list", required_argument, NULL, 'X' },
 		{ "node-list", required_argument, NULL, 'l' },
 		{ "records-per-second", required_argument, NULL, 'L' },
 		{ "machine", required_argument, NULL, 'm' },
@@ -2426,7 +2426,7 @@ main(int32_t argc, char **argv)
 
 	int32_t opt;
 	uint64_t tmp;
-	const char *optstring = "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIVZL:";
+	const char *optstring = "-h:Sp:A:U:P::n:s:d:o:F:rvxCB:w:l:m:eN:RIVZL:X:";
 
 	// option string should start with '-' to avoid argv permutation
 	// we need same argv sequence in third check to support space separated optional argument value
