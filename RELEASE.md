@@ -1,6 +1,3 @@
 ## Bug Fixes
-TOOLS-2955 - (ASVALIDATION) Add support for Ubuntu 24.04 LTS
-TOOLS-2956 - (ASVALIDATION) Remove support for CentOS 7
-TOOLS-2958 - (ASVALIDATION) Remove support for Debian 9.
-TOOLS-3034 - (ASVALIDATION) Add missing args to readme.
-TOOLS-3037 - (ASVALIDATION) Implement partition filter option.
+TOOLS-3039 - (ASVALIDATION) Corrected `--partition-list` option name and add `-X` option to args.
+TOOLS-3040 - (ASVALIDATION) Updated client hotfix release.
