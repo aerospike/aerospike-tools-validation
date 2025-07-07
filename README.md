@@ -120,22 +120,13 @@ Default number of partitions to scan: 0 to 4095: all partitions.
 
 | Option | Default | Description|
 |--------|---------|------------|
-| `-d PATH` or `--directory PATH` | - | Directory to store the `.asb` validation files in. If the directory does not exist, it will be created before use. **Mandatory, unless `--output-file` or `--estimate` is given.** |
-| `-o PATH` or `--output-file PATH` | - | The single file to write to. `-` means `stdout`. **Mandatory, unless `--directory` or `--estimate` is given.** |
+| `-d PATH` or `--directory PATH` | - | Directory to store the `.asb` validation files in. If the directory does not exist, it will be created before use. **Mandatory, unless `--output-file` is given.** |
+| `-o PATH` or `--output-file PATH` | - | The single file to write to. `-` means `stdout`. **Mandatory, unless `--directory` is given.** |
 | -q `DESIRED-PREFIX`<br /><br />or<br /><br />`--output-file-prefix DESIRED-PREFIX` |  | Must be used with the `--directory` option. A desired prefix for all output files. |
 | `-F LIMIT` or `--file-limit LIMIT` | 250 MiB | File size limit (in MiB) for `--directory`. If a `.asb` validation file crosses this size threshold, `asvalidation` will switch to a new file. |
-| `-r` or `--remove-files` | - | Clear directory or remove output file. By default, `asvalidation` refuses to write to a non-empty directory or to overwrite an existing validation file. This option clears the given `--directory` or removes an existing `--output-file`. Mutually exclusive to `--continue`. |
-| `--remove-artifacts` | - | Clear directory or remove output file, like `--remove-files`, without running a validation. This option is mutually exclusive to `--continue` and `--estimate`. |
+| `-r` or `--remove-files` | - | Clear directory or remove output file. By default, `asvalidation` refuses to write to a non-empty directory or to overwrite an existing validation file. This option clears the given `--directory` or removes an existing `--output-file`. |
+| `--remove-artifacts` | - | Clear directory or remove output file, like `--remove-files`, without running a validation. |
 | `-N BANDWIDTH` or `--nice BANDWIDTH` | - | Throttles `asvalidation`'s write operations to the validation file(s) to not exceed the given bandwidth in MiB/s. Effectively also throttles the scan on the server side as `asvalidation` refuses to accept more data than it can write. |
-
-### Timeout options
-
-| Option | Default | Description|
-|--------|---------|------------|
-| `--socket-timeout MS` | 10000 | Socket timeout in milliseconds. If this value is 0, it is set to total-timeout. If both are 0, there is no socket idle time limit. |
-| `--total-timeout MS` | 0 | Total socket timeout in milliseconds. Default is 0, that is, no timeout. |
-| `--max-retries N` | 5 | Maximum number of retries before aborting the current transaction. |
-| `--sleep-between-retries MS` | 0 | The amount of time to sleep between retries. |
 
 ### TLS options
 
@@ -155,13 +146,6 @@ Default number of partitions to scan: 0 to 4095: all partitions.
 | `--tls-log-session-info` | | Enable logging session information for each TLS connection. |
 
 `TLS_NAME` is only used when connecting with a secure TLS enabled server.
-
-### Validation resumption
-
-| Option | Default | Description|
-|--------|---------|------------|
-| `--continue STATE-FILE` | disabled | Enables the resumption of an interrupted validation from provided state file. All other command line arguments should match those used in the initial run (except `--remove-files`, which is mutually exclusive with `--continue`). |
-| `--state-file-dst` | see below | Specifies where to save the validation state file to. If this points to a directory, the state file is saved within the directory using the same naming convention as save-to-directory state files. If this does not point to a directory, the path is treated as a path to the state file. |
 
 ### Other options
 
