@@ -28,6 +28,7 @@ case "$CMD" in
   exit 1
 esac
 
+# validate mount point for output
 MOUNT_PATH="/output"
 
 if [ -f "${MOUNT_PATH}/no-volume.txt" ]; then

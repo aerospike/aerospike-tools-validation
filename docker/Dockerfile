@@ -26,7 +26,7 @@ ADD wrapper.sh /aerospike/wrapper
 
 RUN chmod u+x /aerospike/wrapper
 
-# Use a non-root user for security
+# Use a mount point validation for output
 RUN mkdir -p /output 
 RUN echo "Volume not mounted!" > /output/no-volume.txt
 
