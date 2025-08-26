@@ -28,10 +28,19 @@ case "$CMD" in
   exit 1
 esac
 
+MOUNT_PATH="/output"
+
+if [ -f "${MOUNT_PATH}/no-volume.txt" ]; then
+  echo "Warning: The directory $MOUNT_PATH is not mounted."
+  echo "Ensure you mount a writable directory to $MOUNT_PATH to store log files."
+  echo "Example: docker run -v /path/to/local/dir:/output <image-name> asvalidation -h 172.17.0.1 -o test.log -n test"
+  exit 1
+fi
+
 if [[ $AEROSPIKE_PORT_3000_TCP_ADDR ]]; then
-$CMD -h $AEROSPIKE_PORT_3000_TCP_ADDR -p $AEROSPIKE_PORT_3000_TCP_PORT "$@"
-exit $?
+  $CMD -h $AEROSPIKE_PORT_3000_TCP_ADDR -p $AEROSPIKE_PORT_3000_TCP_PORT "$@"
+  exit $?
 else
-$CMD "$@"
-exit $?
+  $CMD "$@"
+  exit $?
 fi  
