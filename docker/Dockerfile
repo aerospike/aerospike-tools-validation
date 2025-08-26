@@ -3,8 +3,8 @@ FROM ubuntu:24.10 AS install
 ARG TARGETARCH
 
 RUN \
-  apt-get update -y \
-  && apt-get install -y \
+  apt update -y \
+  && apt install -y \
   wget
 
 ARG TOOL_VERSION=2.1.1
