@@ -1,0 +1,29 @@
+FROM ubuntu:24.10 AS install
+
+ARG TARGETARCH
+
+RUN \
+  apt-get update -y \
+  && apt-get install -y \
+  wget
+
+ARG TOOL_VERSION=2.1.1
+ARG TOOL_ARTIFACT_URL_BASE="https://download.aerospike.com/artifacts/aerospike-tools-validation/${TOOL_VERSION}/asvalidation_${TOOL_VERSION}-1ubuntu24.04"
+
+# Work from /aerospike
+WORKDIR /aerospike
+ENV PATH=/aerospike:$PATH
+
+# Install Aerospike asvalidation tool
+RUN \
+  wget "${TOOL_ARTIFACT_URL_BASE}_${TARGETARCH}.deb" -O aerospike-asvalidation-tools.deb  \
+  && apt update && apt install -y libreadline8 && ls /aerospike && dpkg -i /aerospike/aerospike-asvalidation-tools.deb \
+  && rm -rf aerospike /var/lib/apt/lists/* /var/cache/apt/* /aerospike/aerospike-asvalidation-tools.deb
+
+# Addition of wrapper script
+ADD wrapper.sh /aerospike/wrapper
+
+RUN chmod u+x /aerospike/wrapper
+    
+# Wrapper script entrypoint
+ENTRYPOINT ["wrapper"]
