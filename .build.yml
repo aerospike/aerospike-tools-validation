@@ -9,6 +9,7 @@ container:
   - base:
       - docker.qe.aerospike.com/build/aerospike-server:arm-rhel-8
       - docker.qe.aerospike.com/build/aerospike-server:arm-rhel-9
+      - docker.qe.aerospike.com/build/aerospike-server:arm-rhel-10
       - docker.qe.aerospike.com/build/aerospike-server:arm-debian-11
       - docker.qe.aerospike.com/build/aerospike-server:arm-debian-12
       - docker.qe.aerospike.com/build/aerospike-server:arm-debian-13
@@ -19,6 +20,7 @@ container:
 
       - docker.qe.aerospike.com/build/aerospike-server:x86-rhel-8
       - docker.qe.aerospike.com/build/aerospike-server:x86-rhel-9
+      - docker.qe.aerospike.com/build/aerospike-server:x86-rhel-10
       - docker.qe.aerospike.com/build/aerospike-server:x86-debian-10
       - docker.qe.aerospike.com/build/aerospike-server:x86-debian-11
       - docker.qe.aerospike.com/build/aerospike-server:x86-debian-12

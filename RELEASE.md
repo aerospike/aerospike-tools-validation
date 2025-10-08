@@ -1,5 +1,6 @@
 ## Release 2.2.0
-- TOOLS-3020 - (ASVALIDATION) Add support for Debian 13
+- TOOLS-3020 - (ASVALIDATION) Add support for Debian 13.
+- TOOLS-3130 - (ASVALIDATION) Add support for Redhat 10.
 
 ## Release 2.1.1
 - TOOLS-3039 - (ASVALIDATION) Corrected `--partition-list` option name and add `-X` option to args.
