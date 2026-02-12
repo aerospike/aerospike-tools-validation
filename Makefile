@@ -83,6 +83,7 @@ else
   LIBRARIES += $(OPENSSL_STATIC_PATH)/libssl.a
   LIBRARIES += $(OPENSSL_STATIC_PATH)/libcrypto.a
 endif
+LIBRARIES += -lyaml
 LIBRARIES += -lpthread
 LIBRARIES += -lm
 LIBRARIES += -lz
