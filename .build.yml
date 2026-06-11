@@ -12,7 +12,6 @@ container:
       - docker.qe.aerospike.com/build/aerospike-tools:arm-rhel-10
       - docker.qe.aerospike.com/build/aerospike-tools:arm-debian-12
       - docker.qe.aerospike.com/build/aerospike-tools:arm-debian-13
-      - docker.qe.aerospike.com/build/aerospike-tools:arm-ubuntu-20.04
       - docker.qe.aerospike.com/build/aerospike-tools:arm-ubuntu-22.04
       - docker.qe.aerospike.com/build/aerospike-tools:arm-ubuntu-24.04
       - docker.qe.aerospike.com/build/aerospike-tools:arm-ubuntu-26.04
@@ -23,7 +22,6 @@ container:
       - docker.qe.aerospike.com/build/aerospike-tools:rhel-10
       - docker.qe.aerospike.com/build/aerospike-tools:debian-12
       - docker.qe.aerospike.com/build/aerospike-tools:debian-13
-      - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-20.04
       - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-22.04
       - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-24.04
       - docker.qe.aerospike.com/build/aerospike-tools:ubuntu-26.04
