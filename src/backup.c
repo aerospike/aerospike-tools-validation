@@ -25,6 +25,7 @@
 #include <conf.h>
 #include <enc_text.h>
 #include <utils.h>
+#include <version.h>
 
 #include "msgpack_in.h"
 
@@ -2156,7 +2157,7 @@ static void
 print_version(void)
 {
 	fprintf(stdout, "Aerospike Validation Utility\n");
-	fprintf(stdout, "Version %s\n", TOOL_VERSION);
+	fprintf(stdout, "Version %s\n", VERSION);
 	fprintf(stdout, "C Client Version %s\n", aerospike_client_version);
 	fprintf(stdout, "Copyright 2015-2017 Aerospike. All rights reserved.\n");
 }
