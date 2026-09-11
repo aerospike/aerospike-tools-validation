@@ -8,8 +8,8 @@ export ETC_BASE = $(DEB_BUILD_ROOT)/etc/aerospike
 # Package version from git tags (build/version is the single source of truth):
 # master -> x.y.z; dev branches -> x.y.z-<n>-g<sha> (full git describe).
 REV = $(shell build/version -v)
-# Build number from build/version -r (1-based: tagged release and dev builds are 1);
-# forms the debian revision (with the OS) so successive master builds are orderable.
+# Build number from build/version -r (1-based: tagged release and dev builds are 1).
+# It goes in the debian revision (with the OS); no +1 in this Makefile.
 BUILD_NUMBER = $(shell build/version -r)
 DEB_REVISION = $(BUILD_NUMBER)$(OS)
 OS = $(shell build/os_version)
