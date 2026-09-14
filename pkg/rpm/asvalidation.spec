@@ -1,6 +1,6 @@
 Name: asvalidation
 Version: @VERSION@
-Release: 1%{?dist}
+Release: @RELEASE@%{?dist}
 Summary: Aerospike Validation Tool
 License: Apache 2.0 license
 Group: Application
