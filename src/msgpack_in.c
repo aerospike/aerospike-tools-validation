@@ -1,7 +1,7 @@
 /*
  * msgpack_in.c
  *
- * Copyright (C) 2019-2024 Aerospike, Inc.
+ * Copyright (C) 2019-2026 Aerospike, Inc.
  *
  * Portions may be licensed to Aerospike, Inc. under one or more contributor
  * license agreements.
