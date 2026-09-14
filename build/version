@@ -10,9 +10,9 @@
 #   build/version -r           -> master: build number (tagged release = 1); dev: 1
 #
 # Consumed by pkg/Makefile.rpm and pkg/Makefile.deb: REV = `build/version -v`
-# (bare x.y.z; the rpm Makefile maps '-' to '_') for the package Version, and the
-# build number `build/version -r` (1-based: tagged release and dev builds are 1)
-# feeds the RPM Release / DEB revision.
+# (bare x.y.z; the rpm Makefile maps '-' to '_' in its REV, so print-REV there
+# is underscored). The build number `build/version -r` (1-based: tagged release
+# and dev builds are 1) feeds the RPM Release / DEB revision.
 #
 # Resolution rules:
 # - Always anchors on the bare x.y.z release tag via
@@ -21,13 +21,15 @@
 #   anchor, never emitted). It never emits a leading 'v', which the Debian
 #   Version: field rejects ("does not start with digit").
 # - master: strip the describe --long suffix to x.y.z; default appends -n
-#   (omitted when n is 0, i.e. HEAD is exactly on the release tag, so official
-#   release builds stay bare x.y.z).
+#   (omitted when n is 0: HEAD is exactly on the release tag, or no x.y.z tag
+#   is reachable, so default is the bare SHA — same as -v).
 # - Dev branches: keep the full describe output (-<n>-g<sha>); build number is 1.
 #
-# _build_number counts first-parent commits since the anchoring x.y.z tag (0 when
-# HEAD is exactly on the tag). Non-master branches always return 1. The -r output
-# adds 1 on release lines so the tagged release is build number 1.
+# _build_number counts first-parent commits since the anchoring x.y.z tag.
+# It is 0 when HEAD is exactly on the tag, and also 0 when no tag is reachable
+# (so -r's +1 yields 1; asmt's fallback of 1 would make -r report 2).
+# Non-master branches always return 1. The -r output adds 1 on release lines
+# so the tagged release is build number 1.
 # --first-parent requires git >= 2.20 (debian:10+; ubuntu-18.04/git 2.17 is below).
 #
 # Package version is always derived from git tags via git-describe (through make
@@ -170,7 +172,8 @@ _build_number() {
     if [[ -n "$base_tag" ]]; then
         git rev-list --first-parent --count "${base_tag}..HEAD"
     else
-        # 0 so -r's +1 yields 1 (do not copy asmt's fallback of 1, which becomes 2).
+        # 0 so -r's +1 yields 1, and default mode emits the bare SHA with no -n
+        # suffix (asmt's fallback of 1 would emit SHA-1 and make -r report 2).
         echo "0"
     fi
 }
@@ -184,7 +187,7 @@ _emit_release_version() {
     full)
         local bn
         bn="$(_build_number "$branch")"
-        # Omit -n when n is 0 (HEAD exactly on the release tag).
+        # Omit -n when n is 0: HEAD is on the release tag, or no tag is reachable.
         if [[ "$bn" == "0" ]]; then
             echo "$rev"
         else
