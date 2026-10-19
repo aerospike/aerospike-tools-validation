@@ -117,13 +117,24 @@ SRCS := $(sort $(SRCS))
 OBJS := $(sort $(OBJS))
 DEPS := $(sort $(DEPS))
 
-.PHONY: all clean ragel
+DIR_TEST := test/unit
+DIR_TEST_BIN := $(DIR_BIN)/test
+
+TEST_CFLAGS := -std=gnu99 -g -O1 -fno-omit-frame-pointer \
+		-fsanitize=address,undefined -fno-sanitize-recover=all \
+		-Wall -Wextra -Wconversion -Wsign-conversion -Wmissing-declarations \
+		-D_GNU_SOURCE -pthread
+
+TESTS := $(DIR_TEST_BIN)/test_cdt_walk
+
+.PHONY: all clean ragel test
 
 all: $(BINS)
 
 clean:
 	$(MAKE) -C $(DIR_TOML) clean
 	rm -f $(DEPS) $(OBJS) $(BINS)
+	rm -rf $(DIR_TEST_BIN)
 	if [ -d $(DIR_OBJ) ]; then rmdir $(DIR_OBJ); fi
 	if [ -d $(DIR_BIN) ]; then rmdir $(DIR_BIN); fi
 	if [ -d $(DIR_DOCS) ]; then rm -r $(DIR_DOCS); fi
@@ -152,6 +163,17 @@ $(DIR_BIN):
 
 $(DIR_OBJ)/%.o: $(DIR_SRC)/%.c | $(DIR_OBJ)
 	$(CC) $(CFLAGS) -MMD -o $@ -c $(INCLUDES) $<
+
+test: $(TESTS)
+	@for t in $(TESTS); do $$t || exit 1; done
+
+$(DIR_TEST_BIN):
+	mkdir -p $(DIR_TEST_BIN)
+
+$(DIR_TEST_BIN)/test_cdt_walk: $(DIR_TEST)/test_cdt_walk.c $(DIR_TEST)/test_buf.h \
+		$(DIR_SRC)/cdt_walk.c $(DIR_INC)/cdt_walk.h | $(DIR_TEST_BIN)
+	$(CC) $(TEST_CFLAGS) -I$(DIR_INC) -o $@ $(DIR_TEST)/test_cdt_walk.c \
+		$(DIR_SRC)/cdt_walk.c
 
 $(BACKUP): $(BACKUP_OBJ) | $(DIR_BIN)
 	$(CC) $(LDFLAGS) -o $(BACKUP) $(BACKUP_OBJ) $(LIBRARIES)
