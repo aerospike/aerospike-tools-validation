@@ -51,6 +51,27 @@ static pthread_cond_t bandwidth_cond = PTHREAD_COND_INITIALIZER;    ///< Used by
                                                                     ///  bandwidth to the backup
                                                                     ///  threads.
 
+#ifdef ASVAL_BENCH
+typedef struct bench_stats_s {
+	bool noop;
+	uint64_t check_ns;
+	uint64_t worker_cpu_ns;
+} bench_stats;
+
+static bench_stats g_bench;
+static __thread uint64_t t_check_ns;
+
+static uint64_t
+bench_ns(clockid_t clock)
+{
+	struct timespec ts;
+
+	clock_gettime(clock, &ts);
+
+	return (uint64_t)ts.tv_sec * 1000000000 + (uint64_t)ts.tv_nsec;
+}
+#endif
+
 
 //==========================================================
 // Forward Declarations.
@@ -1093,7 +1114,16 @@ scan_callback(const as_val *val, void *cont)
 
 	atomic_incr(&pnc->conf->rec_count_checked);
 
-	if (! cdt_check(pnc->conf->as, rec, pnc->conf)) {
+#ifdef ASVAL_BENCH
+	uint64_t check_start = bench_ns(CLOCK_MONOTONIC);
+	bool need_log = ! g_bench.noop && cdt_check(pnc->conf->as, rec, pnc->conf);
+
+	t_check_ns += bench_ns(CLOCK_MONOTONIC) - check_start;
+#else
+	bool need_log = cdt_check(pnc->conf->as, rec, pnc->conf);
+#endif
+
+	if (! need_log) {
 		return true;
 	}
 
@@ -1179,6 +1209,10 @@ backup_thread_func(void *cont)
 
 	cf_queue *job_queue = cont;
 	void *res = (void *)EXIT_FAILURE;
+
+#ifdef ASVAL_BENCH
+	uint64_t cpu_start = bench_ns(CLOCK_THREAD_CPUTIME_ID);
+#endif
 
 	while (true) {
 		if (stop) {
@@ -1283,6 +1317,12 @@ backup_thread_func(void *cont)
 
 		stop = true;
 	}
+
+#ifdef ASVAL_BENCH
+	atomic_add(&g_bench.worker_cpu_ns,
+			bench_ns(CLOCK_THREAD_CPUTIME_ID) - cpu_start);
+	atomic_add(&g_bench.check_ns, t_check_ns);
+#endif
 
 	if (verbose) {
 		ver("Leaving validation thread");
@@ -2409,6 +2449,12 @@ main(int32_t argc, char **argv)
 
 	enable_client_log();
 
+#ifdef ASVAL_BENCH
+	const char *bench_noop = getenv("ASVAL_BENCH_NOOP");
+
+	g_bench.noop = bench_noop != NULL && strcmp(bench_noop, "1") == 0;
+#endif
+
 	backup_config conf;
 	memset(&conf, 0, sizeof(backup_config));
 	config_default(&conf);
@@ -2991,6 +3037,10 @@ main(int32_t argc, char **argv)
 
 	uint32_t n_threads_ok = 0;
 
+#ifdef ASVAL_BENCH
+	uint64_t bench_start = bench_ns(CLOCK_MONOTONIC);
+#endif
+
 	if (verbose) {
 		ver("Creating %u validation thread(s)", n_threads);
 	}
@@ -3028,6 +3078,14 @@ cleanup9:
 			res = EXIT_FAILURE;
 		}
 	}
+
+#ifdef ASVAL_BENCH
+	fprintf(stderr, "BENCH noop=%d threads=%u records=%" PRIu64 " wall_ns=%" PRIu64
+			" worker_cpu_ns=%" PRIu64 " check_ns=%" PRIu64 "\n", g_bench.noop,
+			n_threads_ok, atomic_load(&conf.rec_count_checked),
+			bench_ns(CLOCK_MONOTONIC) - bench_start,
+			atomic_load(&g_bench.worker_cpu_ns), atomic_load(&g_bench.check_ns));
+#endif
 
 cleanup8:
 	if (conf.output_file != NULL && !close_file(&backup_args.shared_fd,

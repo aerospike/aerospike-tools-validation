@@ -105,6 +105,16 @@ BACKUP_DEP := $(call obj_to_dep, $(BACKUP_OBJ))
 BACKUP := $(DIR_BIN)/asvalidation
 TOML := $(DIR_TOML)/libtoml.a
 
+# Benchmark build: make BENCH=1 builds bin/asvalidation-bench with timing
+# instrumentation. The normal build is not affected.
+ifeq ($(BENCH),1)
+  CFLAGS += -DASVAL_BENCH
+  DIR_OBJ := obj/bench
+  BACKUP_OBJ := $(call src_to_obj, $(BACKUP_SRC))
+  BACKUP_DEP := $(call obj_to_dep, $(BACKUP_OBJ))
+  BACKUP := $(DIR_BIN)/asvalidation-bench
+endif
+
 INCS := $(BACKUP_INC)
 SRCS := $(BACKUP_SRC)
 OBJS := $(BACKUP_OBJ)
@@ -124,6 +134,7 @@ all: $(BINS)
 clean:
 	$(MAKE) -C $(DIR_TOML) clean
 	rm -f $(DEPS) $(OBJS) $(BINS)
+	rm -rf obj/bench $(DIR_BIN)/asvalidation-bench
 	if [ -d $(DIR_OBJ) ]; then rmdir $(DIR_OBJ); fi
 	if [ -d $(DIR_BIN) ]; then rmdir $(DIR_BIN); fi
 	if [ -d $(DIR_DOCS) ]; then rm -r $(DIR_DOCS); fi
@@ -145,7 +156,7 @@ $(DIR_DOCS): $(INCS) $(SRCS) README.md
 	doxygen doxyfile
 
 $(DIR_OBJ):
-	mkdir $(DIR_OBJ)
+	mkdir -p $(DIR_OBJ)
 
 $(DIR_BIN):
 	mkdir $(DIR_BIN)
