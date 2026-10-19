@@ -585,6 +585,150 @@ test_max_depth(void)
 	tb_free(&tb);
 }
 
+// One level of a nested chain: the bytes before the child, which is always the
+// last element of the level.
+typedef struct nest_kind_s {
+	const char *name;
+	uint8_t prefix[16];
+	uint32_t prefix_sz;
+} nest_kind;
+
+static const nest_kind nest_kinds[] = {
+	{ "list", { 0x91 }, 1 },
+	{ "ordered list", { 0x92, 0xc7, 0x00, 0x01 }, 4 },
+	{ "list16", { 0xdc, 0x00, 0x01 }, 3 },
+	{ "list32", { 0xdd, 0x00, 0x00, 0x00, 0x01 }, 5 },
+	{ "map", { 0x81, 0x01 }, 2 },
+	{ "k-ordered map", { 0x82, 0xc7, 0x00, 0x01, 0xc0, 0x01 }, 6 },
+	{ "kv-ordered map", { 0x82, 0xc7, 0x00, 0x03, 0xc0, 0xa2, 0x03, 'a' }, 8 },
+	{ "map16", { 0xde, 0x00, 0x01, 0xd0, 0x80 }, 5 },
+	{ "map32", { 0xdf, 0x00, 0x00, 0x00, 0x01, 0xcd, 0x01, 0x00 }, 8 },
+	{ "list with geojson and double", { 0x93, 0xa3, 0x17, '{', '}', 0xcb, 0, 0, 0, 0, 0, 0, 0, 0 }, 14 },
+	{ "map with blob key", { 0x82, 0xc4, 0x02, 0x04, 0xff, 0xc0, 0xa2, 0x03, 'b' }, 9 },
+	{ "list with ext siblings", { 0x93, 0xd6, 0x05, 0, 0, 0, 0, 0xc8, 0x00, 0x01, 0x07, 0xaa }, 12 },
+	{ "list with container-like string", { 0x92, 0xa5, 0x03, 0x91, 0x91, 0x91, 0x91 }, 7 },
+	{ "list with wildcard ext", { 0x92, 0xd4, 0xff, 0x00 }, 4 }
+};
+
+#define N_NEST_KINDS (sizeof(nest_kinds) / sizeof(nest_kinds[0]))
+
+// Builds 'depth' levels; level i uses kinds[i % n_kinds], the deepest level
+// holds the leaf.
+static void
+nest(tbuf *tb, uint32_t depth, const uint32_t *kinds, uint32_t n_kinds,
+		const uint8_t *leaf, uint32_t leaf_sz)
+{
+	for (uint32_t i = 0; i < depth; i++) {
+		const nest_kind *k = &nest_kinds[kinds[i % n_kinds]];
+
+		tb_raw(tb, k->prefix, k->prefix_sz);
+	}
+
+	tb_raw(tb, leaf, leaf_sz);
+}
+
+static void
+test_complex_nesting(void)
+{
+	static const uint8_t leaf_int[] = { 0x01 };
+	static const uint8_t leaf_geo[] = { 0xa3, 0x17, '{', '}' };
+	static const uint8_t leaf_flags_list[] = { 0x91, 0xc7, 0x00, 0x01 };
+	static const uint8_t leaf_flags_map[] = { 0x81, 0xc7, 0x00, 0x03, 0xc0 };
+	static const uint8_t leaf_empty[] = { 0x90 };
+	uint32_t all[N_NEST_KINDS];
+
+	for (uint32_t i = 0; i < N_NEST_KINDS; i++) {
+		all[i] = i;
+	}
+
+	tbuf tb = { 0 };
+
+	// Each kind on its own, then all kinds mixed, at 63, 64 and 65 levels.
+	for (uint32_t k = 0; k <= N_NEST_KINDS; k++) {
+		const uint32_t *kinds = k < N_NEST_KINDS ? &all[k] : all;
+		uint32_t n_kinds = k < N_NEST_KINDS ? 1 : N_NEST_KINDS;
+		const char *name = k < N_NEST_KINDS ? nest_kinds[k].name : "mixed";
+
+		for (uint32_t d = 63; d <= 65; d++) {
+			tb.sz = 0;
+			nest(&tb, d, kinds, n_kinds, leaf_int, sizeof(leaf_int));
+
+			if (d <= 64) {
+				expect(fmt("%s x%u, int leaf", name, d), &tb, 64, true, 0, d,
+						tb.sz);
+			}
+			else {
+				expect(fmt("%s x%u, int leaf", name, d), &tb, 64, true, OVER, 65,
+						0);
+			}
+
+			tb.sz = 0;
+			nest(&tb, d, kinds, n_kinds, leaf_geo, sizeof(leaf_geo));
+
+			if (d <= 64) {
+				expect(fmt("%s x%u, geojson leaf", name, d), &tb, 64, true, 0, d,
+						tb.sz);
+			}
+			else {
+				expect(fmt("%s x%u, geojson leaf", name, d), &tb, 64, true, OVER,
+						65, 0);
+			}
+		}
+
+		// 64 levels, then a flags-only list or map, or an empty list, at 65.
+		tb.sz = 0;
+		nest(&tb, 64, kinds, n_kinds, leaf_flags_list, sizeof(leaf_flags_list));
+		expect(fmt("%s x64 + flags-only list", name), &tb, 64, true, OVER, 65, 0);
+
+		tb.sz = 0;
+		nest(&tb, 64, kinds, n_kinds, leaf_flags_map, sizeof(leaf_flags_map));
+		expect(fmt("%s x64 + flags-only map", name), &tb, 64, true, OVER, 65, 0);
+
+		tb.sz = 0;
+		nest(&tb, 64, kinds, n_kinds, leaf_empty, sizeof(leaf_empty));
+		expect(fmt("%s x64 + empty list", name), &tb, 64, true, EMPTY_OVER, 65,
+				tb.sz);
+
+		tb.sz = 0;
+		nest(&tb, 63, kinds, n_kinds, leaf_flags_list, sizeof(leaf_flags_list));
+		expect(fmt("%s x63 + flags-only list", name), &tb, 64, true, 0, 64,
+				tb.sz);
+	}
+
+	// Ordered list at 64 whose siblings are empty containers at 65.
+	static const uint8_t empty_siblings[] = {
+		0x94, 0xc7, 0x00, 0x01, 0x80, 0x90, 0x01
+	};
+
+	tb.sz = 0;
+	chain_into(&tb, 64, empty_siblings, sizeof(empty_siblings));
+	expect("ordered list at 64 with empty siblings", &tb, 64, true, EMPTY_OVER,
+			65, tb.sz);
+
+	// Top-level ordered list carrying a persist index in its flags ext.
+	static const uint8_t persist[] = {
+		0x93, 0xc7, 0x03, 0x11, 0x91, 0x91, 0x91, 0x01, 0x91, 0x02
+	};
+
+	tb.sz = 0;
+	tb_raw(&tb, persist, sizeof(persist));
+	expect("persist index ext is opaque", &tb, 64, true, 0, 2, sizeof(persist));
+
+	// Key-ordered map of ordered lists of geojson.
+	static const uint8_t map_of_lists[] = {
+		0x83, 0xc7, 0x00, 0x01, 0xc0,
+		0x01, 0x93, 0xc7, 0x00, 0x01, 0xa3, 0x17, '{', '}', 0xa3, 0x17, '[', ']',
+		0x02, 0x91, 0x80
+	};
+
+	tb.sz = 0;
+	tb_raw(&tb, map_of_lists, sizeof(map_of_lists));
+	expect("k-ordered map of ordered lists", &tb, 64, true, 0, 3,
+			sizeof(map_of_lists));
+
+	tb_free(&tb);
+}
+
 typedef struct deep_args_s {
 	const tbuf *tb;
 	uint32_t max_depth;
@@ -678,6 +822,7 @@ main(void)
 	test_wide_headers();
 	test_padding_and_scalars();
 	test_max_depth();
+	test_complex_nesting();
 	test_deep_small_stack();
 
 	printf("test_cdt_walk: %u checks, %u failures\n", g_checks, g_failures);
