@@ -32,13 +32,13 @@
 #define CDT_WALK_MAX_DEPTH 255
 
 // Server 8.2 rejects a non-empty list/map nested deeper than its limit.
-#define CDT_WALK_OVER 0x01
+#define CDT_WALK_OVER 0x01u
 // Only an empty list/map is too deep: the server accepts it, the shared msgpack
 // deserializer (client 7.6+, UDFs) does not.
-#define CDT_WALK_EMPTY_OVER 0x02
+#define CDT_WALK_EMPTY_OVER 0x02u
 // A map key that is not an integer, string or blob.
-#define CDT_WALK_INVALID_KEY 0x04
-#define CDT_WALK_CORRUPT 0x08
+#define CDT_WALK_INVALID_KEY 0x04u
+#define CDT_WALK_CORRUPT 0x08u
 
 typedef struct cdt_walk_result_s {
 	uint32_t flags;
