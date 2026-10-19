@@ -8,12 +8,14 @@
 #   testbed.sh run <cmd...>              run a command in the build image, repo mounted at /src
 #   testbed.sh srv-cpu                   print the server container's CPU usage in microseconds
 #
-# ASVAL_REPO=<path> mounts another checkout at /src (default: this one).
+# ASVAL_REPO=<path> mounts another checkout at /src (default: this one); this
+# test bed checkout is always mounted at /testbed too.
 #
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-repo=${ASVAL_REPO:-$(cd "$here/../.." && pwd)}
+testbed_root=$(cd "$here/../.." && pwd)
+repo=${ASVAL_REPO:-$testbed_root}
 source "$here/env.sh"
 
 die() {
@@ -76,7 +78,7 @@ cmd_run() {
 
 	docker run --rm -i ${tty[@]+"${tty[@]}"} --network "$ASVAL_NET" \
 		--cpuset-cpus "$ASVAL_CLIENT_CPUS" --ulimit core=0 \
-		-v "$repo:/src" -w /src "$ASVAL_BUILD_IMAGE" "$@"
+		-v "$repo:/src" -v "$testbed_root:/testbed" -w /src "$ASVAL_BUILD_IMAGE" "$@"
 }
 
 cmd_srv_cpu() {
