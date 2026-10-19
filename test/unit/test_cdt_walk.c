@@ -533,6 +533,73 @@ test_wide_headers(void)
 	tb_free(&tb);
 }
 
+// Every scalar header form at its exact size inside a list, and the same cut
+// short by one byte.
+static void
+test_all_scalar_headers(void)
+{
+	static const struct {
+		const char *name;
+		uint8_t hdr[6];
+		uint32_t hdr_sz;
+		uint32_t payload_sz;
+	} cases[] = {
+		{ "positive fixint", { 0x7f }, 1, 0 },
+		{ "negative fixint", { 0xe0 }, 1, 0 },
+		{ "nil", { 0xc0 }, 1, 0 },
+		{ "false", { 0xc2 }, 1, 0 },
+		{ "true", { 0xc3 }, 1, 0 },
+		{ "fixstr 0", { 0xa0 }, 1, 0 },
+		{ "fixstr 17", { 0xb1 }, 1, 17 },
+		{ "fixstr 31", { 0xbf }, 1, 31 },
+		{ "str8", { 0xd9, 40 }, 2, 40 },
+		{ "str16", { 0xda, 0x01, 0x00 }, 3, 256 },
+		{ "str32", { 0xdb, 0, 0, 0x01, 0x00 }, 5, 256 },
+		{ "bin8", { 0xc4, 3 }, 2, 3 },
+		{ "bin16", { 0xc5, 0x01, 0x01 }, 3, 257 },
+		{ "bin32", { 0xc6, 0, 0, 0, 2 }, 5, 2 },
+		{ "float", { 0xca }, 1, 4 },
+		{ "double", { 0xcb }, 1, 8 },
+		{ "uint8", { 0xcc }, 1, 1 },
+		{ "uint16", { 0xcd }, 1, 2 },
+		{ "uint32", { 0xce }, 1, 4 },
+		{ "uint64", { 0xcf }, 1, 8 },
+		{ "int8", { 0xd0 }, 1, 1 },
+		{ "int16", { 0xd1 }, 1, 2 },
+		{ "int32", { 0xd2 }, 1, 4 },
+		{ "int64", { 0xd3 }, 1, 8 },
+		{ "fixext1", { 0xd4, 0x07 }, 2, 1 },
+		{ "fixext2", { 0xd5, 0x07 }, 2, 2 },
+		{ "fixext4", { 0xd6, 0x07 }, 2, 4 },
+		{ "fixext8", { 0xd7, 0x07 }, 2, 8 },
+		{ "fixext16", { 0xd8, 0x07 }, 2, 16 },
+		{ "ext8", { 0xc7, 3, 0x07 }, 3, 3 },
+		{ "ext16", { 0xc8, 0x01, 0x00, 0x07 }, 4, 256 },
+		{ "ext32", { 0xc9, 0, 0, 0x01, 0x01, 0x07 }, 6, 257 }
+	};
+
+	for (uint32_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		tbuf tb = { 0 };
+
+		tb_u8(&tb, 0x91);
+		tb_raw(&tb, cases[i].hdr, cases[i].hdr_sz);
+
+		for (uint32_t j = 0; j < cases[i].payload_sz; j++) {
+			tb_u8(&tb, 0x91);
+		}
+
+		expect(fmt("%s exact", cases[i].name), &tb, 64, true, 0, 1, tb.sz);
+
+		tb.sz--;
+
+		if (tb.sz > 1) {
+			expect_flags(fmt("%s short", cases[i].name), &tb, 64, true, CORRUPT);
+		}
+
+		tb_free(&tb);
+	}
+}
+
 static void
 test_padding_and_scalars(void)
 {
@@ -820,6 +887,7 @@ main(void)
 	test_meta_and_ext();
 	test_corrupt();
 	test_wide_headers();
+	test_all_scalar_headers();
 	test_padding_and_scalars();
 	test_max_depth();
 	test_complex_nesting();
