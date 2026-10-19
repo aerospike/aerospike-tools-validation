@@ -118,11 +118,18 @@ read_be(const uint8_t *p, uint32_t n)
 }
 
 // Matches msgpack_buf_peek_type() == MSGPACK_TYPE_EXT on the server, which is
-// what makes a leading map key the ordered-map meta key. fixext1 is not one.
+// what makes a leading map key the ordered-map meta key. fixext1 is not one,
+// nor is an ext8 holding the wildcard or infinity query marker.
 static inline bool
-is_meta_ext(uint8_t b)
+is_meta_ext(const uint8_t *p, const uint8_t *end)
 {
-	return (b >= 0xc7 && b <= 0xc9) || (b >= 0xd5 && b <= 0xd8);
+	uint8_t b = p[0];
+
+	if (b == 0xc7) {
+		return ! (end - p >= 4 && p[1] == 1 && p[2] == 0xff && p[3] <= 1);
+	}
+
+	return b == 0xc8 || b == 0xc9 || (b >= 0xd5 && b <= 0xd8);
 }
 
 // Parses the header of the element at *pp. A list/map returns its element
@@ -295,7 +302,7 @@ cdt_walk(const uint8_t *buf, uint32_t buf_sz, uint32_t max_depth,
 
 			uint32_t n_eles = child_map ? 2 * count : count;
 
-			if (child_map && p < end && is_meta_ext(*p)) {
+			if (child_map && p < end && is_meta_ext(p, end)) {
 				uint32_t dummy;
 
 				if (next_ele(&p, end, &dummy, &key_ok) != ELE_SCALAR ||
