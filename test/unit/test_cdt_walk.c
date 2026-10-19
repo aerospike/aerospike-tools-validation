@@ -361,6 +361,9 @@ test_meta_and_ext(void)
 	static const uint8_t later_ext_key[] = {
 		0x82, 0x01, 0x02, 0xd5, 0x01, 0x00, 0x00, 0x03
 	};
+	static const uint8_t wildcard_key[] = { 0x81, 0xc7, 0x01, 0xff, 0x00, 0x01 };
+	static const uint8_t inf_key[] = { 0x81, 0xc7, 0x01, 0xff, 0x01, 0x01 };
+	static const uint8_t ff_ext_meta[] = { 0x81, 0xc7, 0x01, 0xff, 0x02, 0xc0 };
 	tbuf tb = { 0 };
 
 	tb_raw(&tb, meta_nil, sizeof(meta_nil));
@@ -395,6 +398,21 @@ test_meta_and_ext(void)
 	tb_raw(&tb, later_ext_key, sizeof(later_ext_key));
 	expect("ext as a later key", &tb, 64, true, INVALID_KEY, 1,
 			sizeof(later_ext_key));
+
+	tb.sz = 0;
+	tb_raw(&tb, wildcard_key, sizeof(wildcard_key));
+	expect("wildcard first key is not meta", &tb, 64, true, INVALID_KEY, 1,
+			sizeof(wildcard_key));
+
+	tb.sz = 0;
+	tb_raw(&tb, inf_key, sizeof(inf_key));
+	expect("infinity first key is not meta", &tb, 64, true, INVALID_KEY, 1,
+			sizeof(inf_key));
+
+	tb.sz = 0;
+	tb_raw(&tb, ff_ext_meta, sizeof(ff_ext_meta));
+	expect("other type-0xff ext8 first key is meta", &tb, 64, true, 0, 1,
+			sizeof(ff_ext_meta));
 
 	tb_free(&tb);
 }

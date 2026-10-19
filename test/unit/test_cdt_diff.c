@@ -179,11 +179,12 @@ static void gen_value(tbuf *tb, const gen_cfg *cfg, uint32_t level, bool spine);
 static void
 put_any_key(tbuf *tb, const gen_cfg *cfg, uint32_t level)
 {
-	static const uint8_t invalid[][3] = {
+	static const uint8_t invalid[][4] = {
 		{ 0xc0 }, { 0xc2 }, { 0xa0 }, { 0xa2, 0x17, '{' }, { 0xc4, 0x01, 0x05 },
-		{ 0xd4, 0x01, 0x00 }, { 0xca, 0, 0 }
+		{ 0xd4, 0x01, 0x00 }, { 0xca, 0, 0 }, { 0xc7, 0x01, 0xff, 0x00 },
+		{ 0xc7, 0x01, 0xff, 0x01 }
 	};
-	static const uint32_t invalid_sz[] = { 1, 1, 1, 3, 3, 3, 3 };
+	static const uint32_t invalid_sz[] = { 1, 1, 1, 3, 3, 3, 3, 4, 4 };
 
 	uint32_t pick = rnd_below(20);
 
@@ -191,7 +192,7 @@ put_any_key(tbuf *tb, const gen_cfg *cfg, uint32_t level)
 		put_unique_key(tb);
 	}
 	else if (pick < 18) {
-		uint32_t i = rnd_below(7);
+		uint32_t i = rnd_below(9);
 
 		tb_raw(tb, invalid[i], invalid_sz[i]);
 
@@ -261,7 +262,9 @@ gen_value(tbuf *tb, const gen_cfg *cfg, uint32_t level, bool spine)
 			// An ext as the first key is the ordered-map meta key; stored data
 			// only ever has a scalar meta value.
 			uint8_t kb = tb->buf[key_off];
-			bool meta_key = i == 0 && ! flags && ! persist &&
+			const uint8_t *k = tb->buf + key_off;
+			bool marker = kb == 0xc7 && k[1] == 1 && k[2] == 0xff && k[3] <= 1;
+			bool meta_key = i == 0 && ! flags && ! persist && ! marker &&
 					((kb >= 0xc7 && kb <= 0xc9) || (kb >= 0xd5 && kb <= 0xd8));
 
 			if (meta_key) {
