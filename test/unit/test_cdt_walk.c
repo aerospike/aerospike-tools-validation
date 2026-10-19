@@ -255,6 +255,30 @@ test_map_keys(void)
 	expect("key with empty at 65", &tb, 64, true, INVALID_KEY | EMPTY_OVER, 65,
 			66);
 
+	// After a nested value, the map's later keys are still checked.
+	static const uint8_t key_after_child[] = {
+		0x82, 0x01, 0x91, 0x01, 0xc0, 0x02
+	};
+
+	tb.sz = 0;
+	tb_raw(&tb, key_after_child, sizeof(key_after_child));
+	expect("invalid key after a nested value", &tb, 64, true, INVALID_KEY, 2,
+			sizeof(key_after_child));
+
+	// Empty string/blob keys whose next byte looks like a type byte.
+	static const uint8_t empty_str_key[] = { 0x81, 0xa0, 0x03 };
+	static const uint8_t empty_bin_key[] = { 0x81, 0xc4, 0x00, 0x04 };
+
+	tb.sz = 0;
+	tb_raw(&tb, empty_str_key, sizeof(empty_str_key));
+	expect("empty fixstr key before 0x03", &tb, 64, true, INVALID_KEY, 1,
+			sizeof(empty_str_key));
+
+	tb.sz = 0;
+	tb_raw(&tb, empty_bin_key, sizeof(empty_bin_key));
+	expect("empty bin8 key before 0x04", &tb, 64, true, INVALID_KEY, 1,
+			sizeof(empty_bin_key));
+
 	// An invalid key does not stop the walk: a later over-deep value is found.
 	tb.sz = 0;
 	tb_u8(&tb, 0x92);
@@ -295,6 +319,8 @@ test_key_types(void)
 		{ "str8 string", { 0xd9, 0x02, 0x03, 'a' }, 4, true },
 		{ "blob", { 0xc4, 0x02, 0x04, 0xff }, 4, true },
 		{ "fixstr blob", { 0xa2, 0x04, 0xff }, 3, true },
+		{ "fixstr type byte only", { 0xa1, 0x03 }, 2, true },
+		{ "bin8 type byte only", { 0xc4, 0x01, 0x04 }, 3, true },
 		{ "empty fixstr", { 0xa0 }, 1, false },
 		{ "empty bin8", { 0xc4, 0x00 }, 2, false },
 		{ "geojson", { 0xa2, 0x17, '{' }, 3, false },
