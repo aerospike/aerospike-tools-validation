@@ -5,6 +5,9 @@ Type (CDT) values (List and Map bins), optionally attempting to repair any damag
 Records with unrecoverable CDT errors are written to output if an output file is
 specified. Records without CDTs or detected errors are ignored.
 
+It also finds list and map bins nested deeper than Aerospike Database 8.2
+accepts (64 levels), so they can be dealt with before an upgrade.
+
 By default, no fixes are applied and the fix counts should report zero in
 the summary printout.  Aerospike recommends first running the validation tool without the fix
 option to assess the state of the namespace.
@@ -17,6 +20,33 @@ release.  There exist edge cases in this scenario that could result in
 some CDTs becoming corrupted: the validation tool is designed to
 detect &mdash;and if possible correct&mdash; those bins.
 
+### Before upgrading to Aerospike Database 8.2
+
+Server 8.2 rejects list and map values nested deeper than 64 levels. Earlier
+servers accepted any depth, so existing data can be deeper. The upgrade itself
+succeeds and such records can still be read as raw bytes, but afterwards:
+
+* rewriting the record, including a client read-modify-write, fails with
+  error 1 ("list/map nested too deeply");
+* `asrestore` of a backup that contains such a record stops at that record;
+* XDR does not ship such a record to an 8.2 cluster.
+
+The msgpack deserializer shared by C client 7.6.0 and later, and by server UDFs
+(server 8.2 and the 7.2.0.22, 8.0.0.20 and 8.1.2.5 releases), also refuses values
+nested deeper than 64 levels, even when the deepest lists or maps are empty.
+Reads of such records with the default deserialization fail, and a UDF sees the
+bin as nil; a UDF that writes the bin back deletes it.
+
+Run asvalidation on every namespace before upgrading servers to 8.2, before an
+XDR source ships to an 8.2 cluster, and before moving applications to C client
+7.6 or later or relying on UDFs on the releases above. A depth-only pass is the
+fastest:
+
+    asvalidation -n NAMESPACE -o deep.asb --cdt-check-depth-only --fail-on-cdt-depth
+
+Older versions of asvalidation can crash on deeply nested data while checking
+map keys; with those, add `--no-cdt-check-map-keys`. This version does not.
+
 ## Options
 
 A minimal set of options to run this tool.
@@ -25,6 +55,8 @@ A minimal set of options to run this tool.
 |------|---|
 |--cdt-fix-ordered-list-unique|Fix ordered lists that were not stored in order and also remove duplicate elements.|
 |--no-cdt-check-map-keys | Do not check cdt map keys.|
+|--cdt-check-depth-only | Only check list/map nesting depth (and map keys, unless `--no-cdt-check-map-keys`). Faster; cannot be combined with `--cdt-fix-ordered-list-unique`.|
+|--fail-on-cdt-depth | Exit with code 3 if any list or map is nested deeper than 64 levels.|
 | -n | Namespace |
 | -o | Output File Name |
 | -d | Output Directory |
@@ -39,6 +71,8 @@ A minimal set of options to run this tool.
 |Invalid Keys|The bin has a map with at least one invalid key.|This type of error is unfixable without your manual intervention.|
 |Order|The bin has elements out of order.|Can be fixed by reordering the list with the --cdt-fix-ordered-list-unique option. See server version requirements in Recommendations and Server Versions for When to Run asvalidation.|
 |Padding|The bin has garbage bytes after the valid list or map.|Can be fixed by truncating the extra bytes. See server version requirements in Recommendations and Server Versions for When to Run asvalidation.|
+|Rejected by server 8.2+|A list or map that has at least one element is nested deeper than 64 levels.|Not fixable by this tool. Reduce the nesting in the application before upgrading. Records with such bins are never changed in fix mode.|
+|Only via empty lists/maps|Only empty lists or maps are nested deeper than 64 levels. Server 8.2 accepts the record, but C client 7.6+ and UDFs cannot read it.|Not fixable by this tool. Reduce the nesting in the application.|
 
 ## asvalidation Modes
 asvalidation can be run in the following modes. Records without CDTs or detected errors are ignored. Records with detected errors are saved unless otherwise specified. By default, no fixes are applied.
@@ -198,6 +232,10 @@ Default configuration files are read from the following files in the given order
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Fix failed
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Order
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Padding
+2020-01-06 22:12:28 GMT [INF] [24662]          0 Nested deeper than 64 levels
+2020-01-06 22:12:28 GMT [INF] [24662]          0   Rejected by server 8.2+
+2020-01-06 22:12:28 GMT [INF] [24662]          0   Only via empty lists/maps (rejected by client 7.6+ and UDFs)
+2020-01-06 22:12:28 GMT [INF] [24662] Deepest list/map nesting: 3 levels
 ```
 
 * In this case, the tool was run in validation mode.
@@ -206,6 +244,19 @@ Default configuration files are read from the following files in the given order
 * The reason for corruption is listed as out of order (10 Order).
 * Because it was in validation mode, no fixes were applied (0 Fixed).
 * NOTE: Numbers under a heading do not necessarily add up to the count of the line. For example, there could be (1 Need Fix) but it could have both an Order and Padding error.
+* No list or map was nested deeper than 64 levels; the deepest one had 3 levels. The depth counts are per bin. "Fix skipped" is added in fix mode: fixes not applied because the record has a bin nested too deep.
+
+Records with bins nested too deep are written to the output file like any other
+problem record. They cannot be restored into an 8.2 cluster as they are. If many
+records are affected, the output can approach the size of the namespace; use
+`--directory` with `--file-limit` to split it.
+
+With `--machine`, the end of the run also writes
+`CDT_DEPTH:<limit>:<deepest>:<rejected by server>:<only via empty lists/maps>`.
+A `<deepest>` of `<limit> + 1` means deeper than the limit.
+
+Exit codes: 0 when the run completed, 1 on errors, and 3 with
+`--fail-on-cdt-depth` when any list or map is nested too deep.
 
 Other corruption reasons:
 * Has non-storage -- The bin contains an infinite or wildcard element which are not allowed as storage (unfixable).
@@ -244,6 +295,10 @@ Then build the validation tools and generate the Doxygen documentation.
     make docs
 
 This provides `asvalidation` binary in the `bin` subdirectory -- as well as the Doxygen HTML documentation in `docs`. Open `docs/index.html` to access the generated documentation.
+
+To run the unit tests (no server needed):
+
+    make test
 
 ## Validation File Format
 
