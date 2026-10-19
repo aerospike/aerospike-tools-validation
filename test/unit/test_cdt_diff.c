@@ -22,6 +22,8 @@
 // - Key rule: the map-key check asvalidation used before the walker (a
 //   recursive function, copied below unchanged) must fail exactly when the walk
 //   reports INVALID_KEY. Inputs stay shallow so it cannot overflow the stack.
+// - Duplicate keys: cdt_need_fix() must find a duplicate map key exactly when
+//   the pairwise check asvalidation used before (copied below unchanged) does.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +31,7 @@
 #include <aerospike/as_msgpack.h>
 #include <aerospike/as_val.h>
 
+#include <cdt_check.h>
 #include <cdt_walk.h>
 
 #include "msgpack_in.h"
@@ -41,6 +44,7 @@
 
 #define N_STRICT_CASES 50000
 #define N_KEY_CASES 50000
+#define N_DUP_CASES 20000
 #define MAX_PRINTED 5
 
 typedef struct gen_cfg_s {
@@ -172,6 +176,50 @@ old_check_map_keys(const uint8_t *b, const uint8_t *end)
 
 	return next_b;
 }
+
+
+//==========================================================
+// Reference: the pairwise duplicate-key check from before the sort.
+//
+
+static bool
+old_dup_key_check(uint32_t ele_count, const uint8_t *contents,
+		uint32_t content_sz)
+{
+	if (ele_count <= 1) {
+		return false;
+	}
+
+	msgpack_in mp = {
+			.buf = contents,
+			.buf_sz = content_sz
+	};
+
+	// Simple O(n^2 / 2) check for dup keys.
+	for (uint32_t i = 1; i < ele_count; i++) {
+		uint32_t cur_off = mp.offset;
+
+		msgpack_sz_rep(&mp, 2);
+
+		uint32_t next_off = mp.offset;
+		msgpack_in rhs = mp;
+
+		for (uint32_t j = i; j < ele_count; j++) {
+			mp.offset = cur_off;
+
+			if (msgpack_cmp(&mp, &rhs) == MSGPACK_CMP_EQUAL) {
+				return true;
+			}
+
+			msgpack_sz(&rhs);
+		}
+
+		mp.offset = next_off;
+	}
+
+	return false;
+}
+
 
 
 //==========================================================
@@ -513,6 +561,166 @@ test_strict(void)
 	return failures;
 }
 
+// A key from small pools, so duplicates are common. Equal integers come in
+// different encodings; rare lists, maps and doubles (NaN too) take the
+// pairwise fallback.
+static void
+put_dup_key(tbuf *tb, uint32_t pool)
+{
+	uint32_t v = rnd_below(pool);
+
+	switch (rnd_below(23)) {
+	case 0 ... 5:
+		if (v < 128 && rnd_below(2) == 0) {
+			tb_u8(tb, (uint8_t)v);
+		}
+		else if (v < 128 && rnd_below(2) == 0) {
+			tb_u8(tb, 0xd0);
+			tb_u8(tb, (uint8_t)v);
+		}
+		else if (rnd_below(2) == 0) {
+			tb_u8(tb, 0xcd);
+			tb_be(tb, v, 2);
+		}
+		else {
+			tb_u8(tb, 0xcf);
+			tb_be(tb, v, 8);
+		}
+		break;
+	case 6 ... 8:
+		tb_u8(tb, 0xd1);
+		tb_be(tb, (uint64_t)(-(int64_t)v - 1), 2);
+		break;
+	case 9 ... 12:
+		tb_u8(tb, 0xa5);
+		tb_u8(tb, 3);
+		tb_be(tb, v, 4);
+		break;
+	case 13 ... 15:
+		tb_u8(tb, 0xc4);
+		tb_u8(tb, 3);
+		tb_u8(tb, 4);
+		tb_be(tb, v, 2);
+		break;
+	case 16:
+		tb_u8(tb, v % 3 == 0 ? 0xc0 : v % 3 == 1 ? 0xc2 : 0xc3);
+		break;
+	case 17:
+		if (rnd_below(50) == 0) {
+			tb_u8(tb, 0x92);
+			tb_u8(tb, (uint8_t)(v & 0x7f));
+			tb_u8(tb, 0x01);
+		}
+		else {
+			tb_u8(tb, (uint8_t)(v & 0x7f));
+		}
+		break;
+	case 18:
+		if (rnd_below(50) == 0) {
+			tb_u8(tb, 0x81);
+			tb_u8(tb, (uint8_t)(v & 0x7f));
+			tb_u8(tb, 0x01);
+		}
+		else {
+			tb_u8(tb, (uint8_t)(v & 0x7f));
+		}
+		break;
+	case 20:
+		tb_u8(tb, 0xa5);
+		tb_u8(tb, 0x17);
+		tb_be(tb, v, 4);
+		break;
+	case 21:
+		if (v % 2 == 0) {
+			tb_u8(tb, 0xa1);
+			tb_u8(tb, 3);
+		}
+		else {
+			tb_u8(tb, 0xa0);
+		}
+		break;
+	case 22:
+		tb_u8(tb, 0xcf);
+		tb_be(tb, 0x8000000000000000ULL | v, 8);
+		break;
+	default:
+		if (rnd_below(50) == 0) {
+			tb_u8(tb, 0xcb);
+			tb_be(tb, v % 2 == 0 ? 0x7ff8000000000000ULL : (uint64_t)v << 40, 8);
+		}
+		else {
+			tb_u8(tb, (uint8_t)(v & 0x7f));
+		}
+		break;
+	}
+}
+
+static uint32_t
+test_dup_keys(void)
+{
+	uint32_t failures = 0;
+	uint32_t n_dup = 0;
+
+	for (uint32_t c = 0; c < N_DUP_CASES; c++) {
+		uint32_t n = rnd_below(4) == 0 ? 1 + rnd_below(20) : 16 + rnd_below(385);
+		uint32_t pool = rnd_below(2) == 0 ? 2 * n : 100 * n;
+		bool ordered = rnd_below(4) == 0;
+		tbuf tb = { 0 };
+
+		put_map_hdr(&tb, n + (ordered ? 1 : 0));
+
+		if (ordered) {
+			tb_raw(&tb, (const uint8_t[]){ 0xc7, 0x00, 0x01, 0xc0 }, 4);
+		}
+
+		uint32_t contents = tb.sz;
+
+		for (uint32_t i = 0; i < n; i++) {
+			put_dup_key(&tb, pool);
+			tb_u8(&tb, (uint8_t)rnd_below(128));
+		}
+
+		// What cdt_need_fix() hands the duplicate check: the header count, and
+		// the contents after the header (and after the meta pair).
+		bool ref = old_dup_key_check(n + (ordered ? 1 : 0), tb.buf + contents,
+				tb.sz - contents);
+
+		backup_config bc;
+		cdt_fix cf = { NULL };
+
+		memset(&bc, 0, sizeof(bc));
+
+		uint8_t *bin = malloc(tb.sz);
+
+		memcpy(bin, tb.buf, tb.sz);
+		cdt_need_fix(bin, tb.sz, &cf, &bc);
+		free(bin);
+
+		// An ordered map only reaches the duplicate check when its keys are
+		// out of order or equal; otherwise there is nothing to compare.
+		bool reached = ! ordered || bc.cdt_map.need_fix != 0 ||
+				bc.cdt_map.cf_dupkey != 0;
+		bool got = bc.cdt_map.cf_dupkey != 0;
+
+		n_dup += ref ? 1 : 0;
+
+		if (reached && got != ref) {
+			if (failures++ < MAX_PRINTED) {
+				fprintf(stderr, "FAIL dup case %u (%u keys%s): old %d, new %d\n  ",
+						c, n, ordered ? ", ordered" : "", ref, got);
+				print_hex(&tb);
+			}
+		}
+
+		tb_free(&tb);
+	}
+
+	printf("test_cdt_diff: duplicate keys, %u cases (%u with duplicates), "
+			"%u mismatches\n", N_DUP_CASES, n_dup, failures);
+
+	return failures;
+}
+
 static uint32_t
 test_keys(void)
 {
@@ -567,7 +775,7 @@ main(int argc, char **argv)
 {
 	g_rng = argc > 1 ? strtoull(argv[1], NULL, 10) : 1;
 
-	uint32_t failures = test_strict() + test_keys();
+	uint32_t failures = test_strict() + test_keys() + test_dup_keys();
 
 	return failures == 0 ? 0 : 1;
 }

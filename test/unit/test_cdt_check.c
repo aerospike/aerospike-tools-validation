@@ -38,6 +38,16 @@ typedef struct expected_s {
 static uint32_t g_checks;
 static uint32_t g_failures;
 
+const char *__asan_default_options(void);
+
+// Stop on any allocation sized from a corrupt header count, even where the
+// system would grant it.
+const char *
+__asan_default_options(void)
+{
+	return "max_allocation_size_mb=1024";
+}
+
 
 //==========================================================
 // Helpers.
@@ -160,6 +170,22 @@ test_order_violation_position(void)
 }
 
 
+// A corrupt header count of 2^31 + 16: 2 * count wraps to 32 elements, so 16
+// pairs parse. The duplicate check must size its work from those bytes.
+static void
+test_header_count_beyond_contents(void)
+{
+	static const uint8_t map[] = {
+		0xdf, 0x80, 0x00, 0x00, 0x10, 0x00, 0x01, 0x01, 0x01, 0x02, 0x01, 0x03,
+		0x01, 0x04, 0x01, 0x05, 0x01, 0x06, 0x01, 0x07, 0x01, 0x08, 0x01, 0x09,
+		0x01, 0x0a, 0x01, 0x0b, 0x01, 0x0c, 0x01, 0x0d, 0x01, 0x0e, 0x01, 0x0f,
+		0x01
+	};
+
+	check("map with header count 2^31 + 16", map, sizeof(map), (expected){ 0 });
+}
+
+
 //==========================================================
 // Main.
 //
@@ -169,6 +195,7 @@ main(void)
 {
 	test_integers_near_start();
 	test_order_violation_position();
+	test_header_count_beyond_contents();
 
 	printf("test_cdt_check: %u checks, %u failures\n", g_checks, g_failures);
 

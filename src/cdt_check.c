@@ -25,6 +25,14 @@
 
 
 //==========================================================
+// Typedefs & constants.
+//
+
+// Below this many keys, comparing every pair is cheaper than sorting.
+#define DUP_KEY_SORT_MIN 16
+
+
+//==========================================================
 // Functions.
 //
 
@@ -63,7 +71,7 @@ cdt_check_sz(msgpack_in *mp, uint32_t sz, cdt_fix *cf, cdt_stats *stat)
 }
 
 static bool
-cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
+dup_key_check_pairs(uint32_t ele_count, const uint8_t *contents,
 		uint32_t content_sz)
 {
 	if (ele_count <= 1) {
@@ -98,6 +106,132 @@ cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
 	}
 
 	return false;
+}
+
+typedef struct key_ref_s {
+	const uint8_t *buf;
+	uint32_t sz;
+} key_ref;
+
+static msgpack_cmp_type
+key_ref_cmp(const key_ref *a, const key_ref *b)
+{
+	msgpack_in ma = { .buf = a->buf, .buf_sz = a->sz };
+	msgpack_in mb = { .buf = b->buf, .buf_sz = b->sz };
+
+	return msgpack_cmp(&ma, &mb);
+}
+
+// Bottom-up merge sort of n keys, using tmp (n entries) as scratch. Returns
+// whichever of the two arrays holds the result. It never reads or writes out
+// of bounds, whatever the comparisons return.
+static key_ref *
+key_ref_sort(key_ref *keys, key_ref *tmp, uint32_t n)
+{
+	key_ref *src = keys;
+	key_ref *dst = tmp;
+
+	for (uint64_t width = 1; width < n; width *= 2) {
+		for (uint64_t lo = 0; lo < n; lo += 2 * width) {
+			uint32_t mid = (uint32_t)(lo + width < n ? lo + width : n);
+			uint32_t hi = (uint32_t)(lo + 2 * width < n ? lo + 2 * width : n);
+			uint32_t i = (uint32_t)lo;
+			uint32_t j = mid;
+			uint32_t k = (uint32_t)lo;
+
+			while (i < mid && j < hi) {
+				dst[k++] = key_ref_cmp(&src[j], &src[i]) == MSGPACK_CMP_LESS ?
+						src[j++] : src[i++];
+			}
+
+			while (i < mid) {
+				dst[k++] = src[i++];
+			}
+
+			while (j < hi) {
+				dst[k++] = src[j++];
+			}
+		}
+
+		key_ref *swap = src;
+
+		src = dst;
+		dst = swap;
+	}
+
+	return src;
+}
+
+// Keys whose msgpack_cmp() order is total: equal keys end up next to each
+// other after sorting. Lists and maps (unordered maps do not compare
+// reliably) and doubles (NaN compares equal to every double) are not.
+static bool
+key_sortable(const msgpack_in *mp)
+{
+	switch (msgpack_peek_type(mp)) {
+	case MSGPACK_TYPE_NIL:
+	case MSGPACK_TYPE_FALSE:
+	case MSGPACK_TYPE_TRUE:
+	case MSGPACK_TYPE_NEGINT:
+	case MSGPACK_TYPE_INT:
+	case MSGPACK_TYPE_STRING:
+	case MSGPACK_TYPE_BYTES:
+	case MSGPACK_TYPE_GEOJSON:
+		return true;
+	default:
+		return false;
+	}
+}
+
+// Return true if two keys are equal. Sorts the keys (O(n log n)) when that
+// gives the same answer as comparing every pair, otherwise compares every
+// pair. The contents have already been parsed, so every element is complete.
+static bool
+cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
+		uint32_t content_sz)
+{
+	if (ele_count < DUP_KEY_SORT_MIN) {
+		return dup_key_check_pairs(ele_count, contents, content_sz);
+	}
+
+	// A key and its value take at least 2 bytes, whatever the header claims.
+	uint32_t max_keys = content_sz / 2 < ele_count ? content_sz / 2 : ele_count;
+	key_ref *keys = cf_malloc(2 * (size_t)max_keys * sizeof(key_ref));
+
+	if (keys == NULL) {
+		return dup_key_check_pairs(ele_count, contents, content_sz);
+	}
+
+	msgpack_in mp = {
+			.buf = contents,
+			.buf_sz = content_sz
+	};
+
+	uint32_t n_keys = 0;
+
+	while (n_keys < max_keys && mp.offset < content_sz) {
+		uint32_t off = mp.offset;
+
+		if (! key_sortable(&mp)) {
+			cf_free(keys);
+			return dup_key_check_pairs(ele_count, contents, content_sz);
+		}
+
+		msgpack_sz(&mp);
+		keys[n_keys++] = (key_ref){ contents + off, mp.offset - off };
+		msgpack_sz(&mp);
+	}
+
+	key_ref *sorted = key_ref_sort(keys, keys + max_keys, n_keys);
+	bool dup = false;
+
+	for (uint32_t i = 1; i < n_keys && ! dup; i++) {
+		dup = key_ref_cmp(&sorted[i - 1], &sorted[i]) == MSGPACK_CMP_EQUAL;
+	}
+
+	cf_free(keys);
+
+	return dup;
 }
 
 // Return true for need fix.
