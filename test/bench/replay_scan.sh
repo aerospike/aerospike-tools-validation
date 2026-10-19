@@ -8,8 +8,9 @@
 #       [--passes 7] [--max 200000] [--callgrind N] ns...
 #
 # Each namespace runs A B B A; the table shows the best pass of each side.
-# --callgrind N adds callgrind instructions per record, over the first N
-# records (deterministic, independent of machine load).
+# --callgrind P adds callgrind instructions per record over all records in
+# partitions 0 to P-1: the same records for both builds whatever the scan
+# order, and independent of machine load.
 #
 set -euo pipefail
 
@@ -48,10 +49,10 @@ done
 	}
 
 	instr() {
-		(cd /tmp && ASVAL_BENCH_REPLAY=1 ASVAL_BENCH_REPLAY_MAX=$cg \
+		ASVAL_BENCH_REPLAY=1 ASVAL_BENCH_REPLAY_MAX=100000000 \
 			valgrind --tool=callgrind --callgrind-out-file=/tmp/cg.out \
 			--toggle-collect=bench_replay_pass "$1" -h "$host" -n "$2" \
-			-o /tmp/replay.asb -r >/tmp/cg.log 2>&1)
+			-X "0-$cg" -o /tmp/replay.asb -r >/tmp/cg.log 2>&1
 		local ir n
 		ir=$(awk "/^(summary|totals):/ { print \$2; exit }" /tmp/cg.out)
 		n=$(sed -nE "s/.*BENCH_REPLAY records=([0-9]+).*/\1/p" /tmp/cg.log)
