@@ -56,10 +56,20 @@ typedef struct bench_stats_s {
 	bool noop;
 	uint64_t check_ns;
 	uint64_t worker_cpu_ns;
+
+	// Replay mode: keep scanned records, then time cdt_check() over them.
+	uint32_t replay_passes;
+	uint32_t replay_max;
+	as_record **recs;
+	uint32_t n_recs;
+	pthread_mutex_t lock;
 } bench_stats;
 
-static bench_stats g_bench;
+static bench_stats g_bench = { .lock = PTHREAD_MUTEX_INITIALIZER };
 static __thread uint64_t t_check_ns;
+
+// The one line that differs between branches: cdt_check()'s signature.
+#define BENCH_CHECK(_conf, _rec) cdt_check((_conf)->as, (_rec), (_conf))
 
 static uint64_t
 bench_ns(clockid_t clock)
@@ -69,6 +79,62 @@ bench_ns(clockid_t clock)
 	clock_gettime(clock, &ts);
 
 	return (uint64_t)ts.tv_sec * 1000000000 + (uint64_t)ts.tv_nsec;
+}
+
+// The scan's record and its buffers are reused after the callback returns, so
+// keep a copy of what cdt_check() reads: list/map bins byte for byte, other
+// bins as nil so the per-bin loop does the same work.
+static as_record *
+bench_copy(const as_record *rec)
+{
+	as_record *copy = as_record_new(rec->bins.size);
+
+	for (uint16_t i = 0; i < rec->bins.size; i++) {
+		const as_bin *bin = &rec->bins.entries[i];
+		as_val *val = (as_val *)bin->valuep;
+
+		if (val == NULL || val->type != AS_BYTES) {
+			as_record_set_nil(copy, bin->name);
+			continue;
+		}
+
+		as_bytes *b = (as_bytes *)val;
+		uint32_t sz = as_bytes_size(b);
+		uint8_t *buf = cf_malloc(sz == 0 ? 1 : sz);
+
+		memcpy(buf, as_bytes_get(b), sz);
+		as_record_set_raw_typep(copy, bin->name, buf, sz, as_bytes_get_type(b),
+				true);
+	}
+
+	return copy;
+}
+
+// Returns false once enough records are kept, which ends the scan.
+static bool
+bench_keep(as_record *rec)
+{
+	bool more = true;
+
+	pthread_mutex_lock(&g_bench.lock);
+
+	if (g_bench.n_recs < g_bench.replay_max) {
+		g_bench.recs[g_bench.n_recs++] = bench_copy(rec);
+	}
+
+	more = g_bench.n_recs < g_bench.replay_max;
+	pthread_mutex_unlock(&g_bench.lock);
+
+	return more;
+}
+
+static int
+bench_cmp_u64(const void *a, const void *b)
+{
+	uint64_t x = *(const uint64_t *)a;
+	uint64_t y = *(const uint64_t *)b;
+
+	return x < y ? -1 : x > y;
 }
 #endif
 
@@ -1115,6 +1181,10 @@ scan_callback(const as_val *val, void *cont)
 	atomic_incr(&pnc->conf->rec_count_checked);
 
 #ifdef ASVAL_BENCH
+	if (g_bench.replay_passes != 0) {
+		return bench_keep(rec);
+	}
+
 	uint64_t check_start = bench_ns(CLOCK_MONOTONIC);
 	bool need_log = ! g_bench.noop && cdt_check(pnc->conf->as, rec, pnc->conf);
 
@@ -2373,6 +2443,45 @@ usage(const char *name)
 	fprintf(stderr, "                      Read only this configuration file.\n");
 }
 
+#ifdef ASVAL_BENCH
+__attribute__((noinline)) static void
+bench_replay_pass(backup_config *conf)
+{
+	for (uint32_t i = 0; i < g_bench.n_recs; i++) {
+		BENCH_CHECK(conf, g_bench.recs[i]);
+	}
+}
+
+static void
+bench_replay(backup_config *conf)
+{
+	uint32_t passes = g_bench.replay_passes;
+	uint64_t *ns = cf_malloc(passes * sizeof(uint64_t));
+
+	for (uint32_t p = 0; p < passes; p++) {
+		uint64_t start = bench_ns(CLOCK_THREAD_CPUTIME_ID);
+
+		bench_replay_pass(conf);
+		ns[p] = bench_ns(CLOCK_THREAD_CPUTIME_ID) - start;
+	}
+
+	qsort(ns, passes, sizeof(uint64_t), bench_cmp_u64);
+
+	double n = g_bench.n_recs == 0 ? 1 : (double)g_bench.n_recs;
+
+	fprintf(stderr, "BENCH_REPLAY records=%u passes=%u min_ns_per_rec=%.1f "
+			"median_ns_per_rec=%.1f\n", g_bench.n_recs, passes,
+			(double)ns[0] / n, (double)ns[passes / 2] / n);
+
+	for (uint32_t i = 0; i < g_bench.n_recs; i++) {
+		as_record_destroy(g_bench.recs[i]);
+	}
+
+	cf_free(ns);
+	cf_free(g_bench.recs);
+}
+#endif
+
 ///
 /// It all starts here.
 ///
@@ -2451,8 +2560,18 @@ main(int32_t argc, char **argv)
 
 #ifdef ASVAL_BENCH
 	const char *bench_noop = getenv("ASVAL_BENCH_NOOP");
+	const char *bench_replay_env = getenv("ASVAL_BENCH_REPLAY");
+	const char *bench_max_env = getenv("ASVAL_BENCH_REPLAY_MAX");
 
 	g_bench.noop = bench_noop != NULL && strcmp(bench_noop, "1") == 0;
+	g_bench.replay_passes = bench_replay_env == NULL ? 0 :
+			(uint32_t)strtoul(bench_replay_env, NULL, 10);
+	g_bench.replay_max = bench_max_env == NULL ? 200000 :
+			(uint32_t)strtoul(bench_max_env, NULL, 10);
+
+	if (g_bench.replay_passes != 0) {
+		g_bench.recs = cf_malloc(g_bench.replay_max * sizeof(as_record *));
+	}
 #endif
 
 	backup_config conf;
@@ -3085,6 +3204,10 @@ cleanup9:
 			n_threads_ok, atomic_load(&conf.rec_count_checked),
 			bench_ns(CLOCK_MONOTONIC) - bench_start,
 			atomic_load(&g_bench.worker_cpu_ns), atomic_load(&g_bench.check_ns));
+
+	if (g_bench.replay_passes != 0) {
+		bench_replay(&conf);
+	}
 #endif
 
 cleanup8:
