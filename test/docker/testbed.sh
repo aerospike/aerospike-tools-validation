@@ -8,10 +8,12 @@
 #   testbed.sh run <cmd...>              run a command in the build image, repo mounted at /src
 #   testbed.sh srv-cpu                   print the server container's CPU usage in microseconds
 #
+# ASVAL_REPO=<path> mounts another checkout at /src (default: this one).
+#
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-repo=$(cd "$here/../.." && pwd)
+repo=${ASVAL_REPO:-$(cd "$here/../.." && pwd)}
 source "$here/env.sh"
 
 die() {
