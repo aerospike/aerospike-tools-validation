@@ -1268,18 +1268,65 @@ msgpack_sz_internal(const uint8_t *buf, const uint8_t * const end,
 	return buf;
 }
 
+// Reads only the sz (2, 4 or 8) bytes at ptr: a bin is its own allocation, so
+// a wider load ending at the last byte would start before it.
 static inline uint64_t
 extract_uint64(const uint8_t *ptr, uint8_t sz)
 {
-	const uint64_t *p64 = (const uint64_t *)(ptr - 8 + sz);
-	return cf_swap_from_be64(*p64) & ((~0ULL) >> (64 - 8 * sz)); // little endian mask
+	switch (sz) {
+	case 2: {
+		uint16_t v;
+
+		memcpy(&v, ptr, sizeof(v));
+		return cf_swap_from_be16(v);
+	}
+	case 4: {
+		uint32_t v;
+
+		memcpy(&v, ptr, sizeof(v));
+		return cf_swap_from_be32(v);
+	}
+	default: {
+		uint64_t v;
+
+		memcpy(&v, ptr, sizeof(v));
+		return cf_swap_from_be64(v);
+	}
+	}
 }
 
 static inline uint64_t
 extract_neg_int64(const uint8_t *ptr, uint8_t sz)
 {
-	const uint64_t *p64 = (const uint64_t *)(ptr - 8 + sz);
-	return cf_swap_from_be64(*p64) | ~((~0ULL) >> (64 - 8 * sz)); // little endian mask
+	return extract_uint64(ptr, sz) | ~((~0ULL) >> (64 - 8 * sz)); // sign-extend
+}
+
+// The integer cases below pass a constant size, so extract_uint64()'s switch
+// is resolved at compile time.
+static inline void
+cmp_parse_uint(parse_meta *meta, uint8_t sz)
+{
+	CMP_PARSE_BUF_CHECK(meta, sz);
+	meta->i_num = extract_uint64(meta->buf, sz);
+	meta->buf += sz;
+	meta->type = MSGPACK_TYPE_INT;
+}
+
+static inline void
+cmp_parse_int(parse_meta *meta, uint8_t sz)
+{
+	CMP_PARSE_BUF_CHECK(meta, sz);
+
+	if ((*meta->buf & 0x80) != 0) {
+		meta->i_num = extract_neg_int64(meta->buf, sz);
+		meta->type = MSGPACK_TYPE_NEGINT;
+	}
+	else {
+		meta->i_num = extract_uint64(meta->buf, sz);
+		meta->type = MSGPACK_TYPE_INT;
+	}
+
+	meta->buf += sz;
 }
 
 static inline void
@@ -1364,13 +1411,13 @@ msgpack_cmp_parse(parse_meta *meta)
 		meta->type = MSGPACK_TYPE_INT;
 		return;
 	case 0xcd: // unsigned 16 bit integer
+		cmp_parse_uint(meta, 2);
+		return;
 	case 0xce: // unsigned 32 bit integer
+		cmp_parse_uint(meta, 4);
+		return;
 	case 0xcf: // unsigned 64 bit integer
-		b = 1U << (b - 0xcc);
-		CMP_PARSE_BUF_CHECK(meta, b);
-		meta->i_num = extract_uint64(meta->buf, b);
-		meta->buf += b;
-		meta->type = MSGPACK_TYPE_INT;
+		cmp_parse_uint(meta, 8);
 		return;
 
 	case 0xd0: // signed 8 bit integer
@@ -1388,21 +1435,13 @@ msgpack_cmp_parse(parse_meta *meta)
 		meta->buf++;
 		return;
 	case 0xd1: // signed 16 bit integer
+		cmp_parse_int(meta, 2);
+		return;
 	case 0xd2: // signed 32 bit integer
+		cmp_parse_int(meta, 4);
+		return;
 	case 0xd3: // signed 64 bit integer
-		b = 1U << (b & 0x0f);
-		CMP_PARSE_BUF_CHECK(meta, b);
-
-		if ((*meta->buf & 0x80) != 0) {
-			meta->i_num = extract_neg_int64(meta->buf, b);
-			meta->type = MSGPACK_TYPE_NEGINT;
-		}
-		else {
-			meta->i_num = extract_uint64(meta->buf, b);
-			meta->type = MSGPACK_TYPE_INT;
-		}
-
-		meta->buf += b;
+		cmp_parse_int(meta, 8);
 		return;
 
 	case 0xca: { // float
