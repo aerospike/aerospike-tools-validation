@@ -38,22 +38,83 @@ typedef enum {
 	ELE_CORRUPT
 } ele_kind;
 
+typedef enum {
+	HDR_FIXED, // scalar, 'n' more bytes
+	HDR_FIXRAW, // string/blob, length in the low 5 bits
+	HDR_RAW, // string/blob, 'n'-byte length
+	HDR_EXT, // ext, 'n'-byte length, then a type byte
+	HDR_FIXLIST,
+	HDR_FIXMAP,
+	HDR_LIST, // 'n'-byte count
+	HDR_MAP, // 'n'-byte count
+	HDR_BAD
+} hdr_kind;
+
+typedef struct hdr_info_s {
+	uint8_t kind;
+	uint8_t n;
+	bool key_ok;
+} hdr_info;
+
+// One entry per msgpack header byte, so the common fixed-size scalars take a
+// single, well-predicted branch.
+static const hdr_info hdr_table[256] = {
+	[0x00 ... 0x7f] = { HDR_FIXED, 0, true },
+	[0x80 ... 0x8f] = { HDR_FIXMAP, 0, false },
+	[0x90 ... 0x9f] = { HDR_FIXLIST, 0, false },
+	[0xa0 ... 0xbf] = { HDR_FIXRAW, 0, false },
+	[0xc0] = { HDR_FIXED, 0, false },
+	[0xc1] = { HDR_BAD, 0, false },
+	[0xc2] = { HDR_FIXED, 0, false },
+	[0xc3] = { HDR_FIXED, 0, false },
+	[0xc4] = { HDR_RAW, 1, false },
+	[0xc5] = { HDR_RAW, 2, false },
+	[0xc6] = { HDR_RAW, 4, false },
+	[0xc7] = { HDR_EXT, 1, false },
+	[0xc8] = { HDR_EXT, 2, false },
+	[0xc9] = { HDR_EXT, 4, false },
+	[0xca] = { HDR_FIXED, 4, false },
+	[0xcb] = { HDR_FIXED, 8, false },
+	[0xcc] = { HDR_FIXED, 1, true },
+	[0xcd] = { HDR_FIXED, 2, true },
+	[0xce] = { HDR_FIXED, 4, true },
+	[0xcf] = { HDR_FIXED, 8, true },
+	[0xd0] = { HDR_FIXED, 1, true },
+	[0xd1] = { HDR_FIXED, 2, true },
+	[0xd2] = { HDR_FIXED, 4, true },
+	[0xd3] = { HDR_FIXED, 8, true },
+	[0xd4] = { HDR_FIXED, 2, false },
+	[0xd5] = { HDR_FIXED, 3, false },
+	[0xd6] = { HDR_FIXED, 5, false },
+	[0xd7] = { HDR_FIXED, 9, false },
+	[0xd8] = { HDR_FIXED, 17, false },
+	[0xd9] = { HDR_RAW, 1, false },
+	[0xda] = { HDR_RAW, 2, false },
+	[0xdb] = { HDR_RAW, 4, false },
+	[0xdc] = { HDR_LIST, 2, false },
+	[0xdd] = { HDR_LIST, 4, false },
+	[0xde] = { HDR_MAP, 2, false },
+	[0xdf] = { HDR_MAP, 4, false },
+	[0xe0 ... 0xff] = { HDR_FIXED, 0, true }
+};
+
 
 //==========================================================
 // Inlines & macros.
 //
 
 static inline uint32_t
-read_be16(const uint8_t *p)
+read_be(const uint8_t *p, uint32_t n)
 {
-	return (uint32_t)p[0] << 8 | p[1];
-}
-
-static inline uint32_t
-read_be32(const uint8_t *p)
-{
-	return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 |
-			p[3];
+	switch (n) {
+	case 1:
+		return p[0];
+	case 2:
+		return (uint32_t)p[0] << 8 | p[1];
+	default:
+		return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 |
+				(uint32_t)p[2] << 8 | p[3];
+	}
 }
 
 // Matches msgpack_buf_peek_type() == MSGPACK_TYPE_EXT on the server, which is
@@ -71,148 +132,79 @@ static inline ele_kind
 next_ele(const uint8_t **pp, const uint8_t *end, uint32_t *count, bool *key_ok)
 {
 	const uint8_t *p = *pp;
-	uint64_t skip;
 
 	if (p >= end) {
 		return ELE_CORRUPT;
 	}
 
 	uint8_t b = *p++;
+	const hdr_info *h = &hdr_table[b];
 	size_t avail = (size_t)(end - p);
+	uint64_t len;
 
-	*key_ok = false;
+	*key_ok = h->key_ok;
 
-	switch (b) {
-	case 0x00 ... 0x7f:
-	case 0xe0 ... 0xff:
-		*key_ok = true;
-		*pp = p;
+	if (h->kind == HDR_FIXED) {
+		if (h->n > avail) {
+			return ELE_CORRUPT;
+		}
+
+		*pp = p + h->n;
 		return ELE_SCALAR;
-	case 0x80 ... 0x8f:
+	}
+
+	switch (h->kind) {
+	case HDR_FIXRAW:
+		len = b & 0x1f;
+		break;
+	case HDR_RAW:
+		if (h->n > avail) {
+			return ELE_CORRUPT;
+		}
+
+		len = read_be(p, h->n);
+		p += h->n;
+		avail -= h->n;
+		break;
+	case HDR_EXT:
+		if (h->n > avail) {
+			return ELE_CORRUPT;
+		}
+
+		len = (uint64_t)read_be(p, h->n) + 1;
+		p += h->n;
+		avail -= h->n;
+
+		if (len > avail) {
+			return ELE_CORRUPT;
+		}
+
+		*pp = p + len;
+		return ELE_SCALAR;
+	case HDR_FIXLIST:
+	case HDR_FIXMAP:
 		*count = b & 0x0f;
 		*pp = p;
-		return ELE_MAP;
-	case 0x90 ... 0x9f:
-		*count = b & 0x0f;
-		*pp = p;
-		return ELE_LIST;
-	case 0xa0 ... 0xbf:
-		skip = b & 0x1f;
-		goto raw;
-	case 0xc0:
-	case 0xc2:
-	case 0xc3:
-		*pp = p;
-		return ELE_SCALAR;
-	case 0xc4:
-	case 0xd9:
-		if (avail < 1) {
+		return h->kind == HDR_FIXLIST ? ELE_LIST : ELE_MAP;
+	case HDR_LIST:
+	case HDR_MAP:
+		if (h->n > avail) {
 			return ELE_CORRUPT;
 		}
 
-		skip = p[0];
-		p += 1;
-		goto raw;
-	case 0xc5:
-	case 0xda:
-		if (avail < 2) {
-			return ELE_CORRUPT;
-		}
-
-		skip = read_be16(p);
-		p += 2;
-		goto raw;
-	case 0xc6:
-	case 0xdb:
-		if (avail < 4) {
-			return ELE_CORRUPT;
-		}
-
-		skip = read_be32(p);
-		p += 4;
-		goto raw;
-	case 0xc7:
-		if (avail < 1) {
-			return ELE_CORRUPT;
-		}
-
-		skip = 1 + 1 + (uint64_t)p[0];
-		break;
-	case 0xc8:
-		if (avail < 2) {
-			return ELE_CORRUPT;
-		}
-
-		skip = 2 + 1 + (uint64_t)read_be16(p);
-		break;
-	case 0xc9:
-		if (avail < 4) {
-			return ELE_CORRUPT;
-		}
-
-		skip = 4 + 1 + (uint64_t)read_be32(p);
-		break;
-	case 0xca:
-	case 0xce:
-	case 0xd2:
-		*key_ok = b != 0xca;
-		skip = 4;
-		break;
-	case 0xcb:
-	case 0xcf:
-	case 0xd3:
-		*key_ok = b != 0xcb;
-		skip = 8;
-		break;
-	case 0xcc:
-	case 0xd0:
-		*key_ok = true;
-		skip = 1;
-		break;
-	case 0xcd:
-	case 0xd1:
-		*key_ok = true;
-		skip = 2;
-		break;
-	case 0xd4 ... 0xd8:
-		skip = 1 + ((uint64_t)1 << (b - 0xd4));
-		break;
-	case 0xdc:
-	case 0xde:
-		if (avail < 2) {
-			return ELE_CORRUPT;
-		}
-
-		*count = read_be16(p);
-		*pp = p + 2;
-		return b == 0xdc ? ELE_LIST : ELE_MAP;
-	case 0xdd:
-	case 0xdf:
-		if (avail < 4) {
-			return ELE_CORRUPT;
-		}
-
-		*count = read_be32(p);
-		*pp = p + 4;
-		return b == 0xdd ? ELE_LIST : ELE_MAP;
-	default: // 0xc1 is never used
+		*count = read_be(p, h->n);
+		*pp = p + h->n;
+		return h->kind == HDR_LIST ? ELE_LIST : ELE_MAP;
+	default:
 		return ELE_CORRUPT;
 	}
 
-	if (skip > avail) {
+	if (len > avail) {
 		return ELE_CORRUPT;
 	}
 
-	*pp = p + skip;
-	return ELE_SCALAR;
-
-raw:
-	if (skip > (uint64_t)(end - p)) {
-		return ELE_CORRUPT;
-	}
-
-	*key_ok = skip != 0 && (p[0] == AS_STRING_TYPE || p[0] == AS_BLOB_TYPE);
-	*pp = p + skip;
+	*key_ok = len != 0 && (p[0] == AS_STRING_TYPE || p[0] == AS_BLOB_TYPE);
+	*pp = p + len;
 
 	return ELE_SCALAR;
 }
@@ -226,106 +218,120 @@ void
 cdt_walk(const uint8_t *buf, uint32_t buf_sz, uint32_t max_depth,
 		bool check_keys, cdt_walk_result *res)
 {
-	uint32_t remaining[CDT_WALK_MAX_DEPTH];
-	bool is_map[CDT_WALK_MAX_DEPTH];
-	uint32_t n_levels = 0;
+	// Parent levels; the innermost open level lives in rem and map.
+	uint32_t saved_rem[CDT_WALK_MAX_DEPTH];
+	bool saved_map[CDT_WALK_MAX_DEPTH];
+	uint32_t n_open = 0;
 	const uint8_t *p = buf;
 	const uint8_t *end = buf + buf_sz;
+	uint32_t flags = 0;
+	uint32_t depth = 0;
 
 	if (max_depth > CDT_WALK_MAX_DEPTH) {
 		max_depth = CDT_WALK_MAX_DEPTH;
 	}
 
-	res->flags = 0;
-	res->depth = 0;
-	res->sz = 0;
+	// Elements left in the innermost open level. Before the first list/map
+	// opens, that is the top-level value itself.
+	uint32_t rem = 1;
+	bool map = false;
 
 	while (true) {
-		bool is_key = false;
-
-		if (n_levels != 0) {
-			uint32_t top = n_levels - 1;
-
+		while (rem != 0) {
 			// A map counts down two per pair, so keys sit at even counts.
-			is_key = is_map[top] && (remaining[top] & 1) == 0;
-			remaining[top]--;
-		}
+			bool is_key = map && (rem & 1) == 0;
+			uint32_t count;
+			bool key_ok;
 
-		uint32_t count;
-		bool key_ok;
-		ele_kind kind = next_ele(&p, end, &count, &key_ok);
+			rem--;
 
-		if (kind == ELE_CORRUPT) {
-			res->flags |= CDT_WALK_CORRUPT;
-			return;
-		}
+			ele_kind kind = next_ele(&p, end, &count, &key_ok);
 
-		if (kind == ELE_SCALAR) {
-			if (is_key && check_keys && ! key_ok) {
-				res->flags |= CDT_WALK_INVALID_KEY;
+			if (kind == ELE_SCALAR) {
+				if (is_key && check_keys && ! key_ok) {
+					flags |= CDT_WALK_INVALID_KEY;
+				}
+
+				continue;
 			}
-		}
-		else {
-			uint32_t level = n_levels + 1;
+
+			if (kind == ELE_CORRUPT) {
+				flags |= CDT_WALK_CORRUPT;
+				goto stop;
+			}
+
+			uint32_t level = n_open + 1;
 
 			if (is_key && check_keys) {
-				res->flags |= CDT_WALK_INVALID_KEY;
+				flags |= CDT_WALK_INVALID_KEY;
 			}
 
-			if (level > res->depth) {
-				res->depth = level;
+			if (level > depth) {
+				depth = level;
 			}
 
 			if (count == 0) {
 				if (level > max_depth) {
-					res->flags |= CDT_WALK_EMPTY_OVER;
+					flags |= CDT_WALK_EMPTY_OVER;
 				}
+
+				continue;
 			}
-			else if (level > max_depth) {
-				res->flags |= CDT_WALK_OVER;
-				return;
+
+			if (level > max_depth) {
+				flags |= CDT_WALK_OVER;
+				goto stop;
 			}
-			else {
-				bool map = kind == ELE_MAP;
-				uint32_t avail = (uint32_t)(end - p);
 
-				// Every element takes at least a byte, which also keeps the
-				// doubled map count from overflowing.
-				if (map ? count > avail / 2 : count > avail) {
-					res->flags |= CDT_WALK_CORRUPT;
-					return;
+			bool child_map = kind == ELE_MAP;
+			uint32_t avail = (uint32_t)(end - p);
+
+			// Every element takes at least a byte, which also keeps the
+			// doubled map count from overflowing.
+			if (child_map ? count > avail / 2 : count > avail) {
+				flags |= CDT_WALK_CORRUPT;
+				goto stop;
+			}
+
+			uint32_t n_eles = child_map ? 2 * count : count;
+
+			if (child_map && p < end && is_meta_ext(*p)) {
+				uint32_t dummy;
+
+				if (next_ele(&p, end, &dummy, &key_ok) != ELE_SCALAR ||
+						next_ele(&p, end, &dummy, &key_ok) != ELE_SCALAR) {
+					flags |= CDT_WALK_CORRUPT;
+					goto stop;
 				}
 
-				uint32_t n_eles = map ? 2 * count : count;
+				n_eles -= 2;
+			}
 
-				if (map && p < end && is_meta_ext(*p)) {
-					uint32_t dummy;
-
-					if (next_ele(&p, end, &dummy, &key_ok) != ELE_SCALAR ||
-							next_ele(&p, end, &dummy, &key_ok) != ELE_SCALAR) {
-						res->flags |= CDT_WALK_CORRUPT;
-						return;
-					}
-
-					n_eles -= 2;
-				}
-
-				if (n_eles != 0) {
-					remaining[n_levels] = n_eles;
-					is_map[n_levels] = map;
-					n_levels++;
-				}
+			if (n_eles != 0) {
+				saved_rem[n_open] = rem;
+				saved_map[n_open] = map;
+				n_open++;
+				rem = n_eles;
+				map = child_map;
 			}
 		}
 
-		while (n_levels != 0 && remaining[n_levels - 1] == 0) {
-			n_levels--;
-		}
-
-		if (n_levels == 0) {
+		if (n_open == 0) {
 			break;
 		}
+
+		n_open--;
+		rem = saved_rem[n_open];
+		map = saved_map[n_open];
 	}
 
+	res->flags = flags;
+	res->depth = depth;
 	res->sz = (uint32_t)(p - buf);
+	return;
+
+stop:
+	res->flags = flags;
+	res->depth = depth;
+	res->sz = 0;
 }
