@@ -359,8 +359,11 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 	}
 
 	as_error error;
+	as_record *op_rec = NULL;
 
-	if (aerospike_key_operate(as, &error, NULL, &rec->key, &ops, &rec) !=
+	// Results go to their own record: passing the scanned record would replace
+	// its bins with the operation's results before it is written out.
+	if (aerospike_key_operate(as, &error, NULL, &rec->key, &ops, &op_rec) !=
 			AEROSPIKE_OK) {
 		err("as_testlist_op() returned %d - %s", error.code, error.message);
 		as_operations_destroy(&ops);
@@ -369,6 +372,7 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 		return;
 	}
 
+	as_record_destroy(op_rec);
 	as_operations_destroy(&ops);
 	cf_free(pk.buffer);
 	atomic_incr(&stat->fixed);
