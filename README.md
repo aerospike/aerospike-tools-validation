@@ -300,6 +300,11 @@ To run the unit tests (no server needed):
 
     make test
 
+To run the end-to-end test, which starts Aerospike CE 8.1 and 8.2 containers
+(needs Docker and python3):
+
+    make e2e
+
 ## Validation File Format
 
 Currently, there is only a single, text-based validation file format, which provides compatibility with previous versions of Aerospike. However, validation file formats are pluggable and a binary format could be supported in the future.
