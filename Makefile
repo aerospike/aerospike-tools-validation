@@ -74,13 +74,11 @@ INCLUDES += -I/usr/local/opt/openssl/include
 LIBRARIES := $(CLIENTREPO)/target/$(PLATFORM)/lib/libaerospike.a
 LIBRARIES += -L/usr/local/lib
 ifeq ($(OPENSSL_STATIC_PATH),)
-  LIBRARIES += -L/usr/local/opt/openssl/lib
-  LIBRARIES += -lssl
-  LIBRARIES += -lcrypto
+  OPENSSL_LIBRARIES := -L/usr/local/opt/openssl/lib -lssl -lcrypto
 else
-  LIBRARIES += $(OPENSSL_STATIC_PATH)/libssl.a
-  LIBRARIES += $(OPENSSL_STATIC_PATH)/libcrypto.a
+  OPENSSL_LIBRARIES := $(OPENSSL_STATIC_PATH)/libssl.a $(OPENSSL_STATIC_PATH)/libcrypto.a
 endif
+LIBRARIES += $(OPENSSL_LIBRARIES)
 LIBRARIES += -lyaml
 LIBRARIES += -lpthread
 LIBRARIES += -lm
@@ -130,7 +128,7 @@ TEST_INCLUDES := -I$(DIR_INC) -I$(DIR_TOML) \
 		-isystem $(CLIENTREPO)/modules/common/src/include
 
 TEST_LIBRARIES := $(CLIENTREPO)/target/$(PLATFORM)/lib/libaerospike.a \
-		-lssl -lcrypto -lyaml -lpthread -lm -lz
+		-L/usr/local/lib $(OPENSSL_LIBRARIES) -lyaml -lpthread -lm -lz
 ifeq ($(OS), Linux)
   TEST_LIBRARIES += -ldl -lrt
 endif
@@ -187,7 +185,7 @@ $(DIR_TEST_BIN)/test_cdt_walk: $(DIR_TEST)/test_cdt_walk.c $(DIR_TEST)/test_buf.
 
 $(DIR_TEST_BIN)/test_cdt_diff: $(DIR_TEST)/test_cdt_diff.c $(DIR_TEST)/test_buf.h \
 		$(DIR_SRC)/cdt_walk.c $(DIR_SRC)/cdt_check.c $(DIR_SRC)/msgpack_in.c \
-		$(DIR_INC)/cdt_walk.h $(DIR_INC)/cdt_check.h | $(DIR_TEST_BIN)
+		$(INCS) | $(DIR_TEST_BIN)
 	$(CC) $(TEST_CFLAGS) -fno-sanitize=alignment $(TEST_INCLUDES) -o $@ \
 		$(DIR_TEST)/test_cdt_diff.c \
 		$(DIR_SRC)/cdt_walk.c $(DIR_SRC)/cdt_check.c $(DIR_SRC)/msgpack_in.c \
