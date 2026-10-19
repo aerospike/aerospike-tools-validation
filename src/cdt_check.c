@@ -28,182 +28,6 @@
 // Functions.
 //
 
-static bool
-map_is_key(const uint8_t *buf, uint32_t buf_sz)
-{
-	msgpack_in mp = {
-			.buf = (uint8_t *)buf,
-			.buf_sz = buf_sz
-	};
-
-	msgpack_type type = msgpack_peek_type(&mp);
-
-	switch (type) {
-	case MSGPACK_TYPE_NEGINT:
-	case MSGPACK_TYPE_INT:
-	case MSGPACK_TYPE_STRING:
-		return true;
-	case MSGPACK_TYPE_BYTES: {
-		uint32_t len;
-		const uint8_t *b = msgpack_get_bin(&mp, &len);
-
-		if (b == NULL || len == 0 || *b != AS_BYTES_BLOB) {
-			break;
-		}
-
-		return true;
-	}
-	default:
-		break;
-	}
-
-	return false;
-}
-
-const uint8_t *
-check_map_keys_internal(const uint8_t *b, const uint8_t *end)
-{
-	bool has_nonstorage = false;
-	bool not_compact = false;
-	uint32_t count = 1;
-	msgpack_type type;
-	const uint8_t *next_b = msgpack_parse(b, end, &count, &type,
-			&has_nonstorage, &not_compact);
-	uint32_t ele_count = count - 1;
-
-	if (next_b == NULL) {
-		return NULL;
-	}
-
-	switch (type) {
-	case MSGPACK_TYPE_LIST:
-	case MSGPACK_TYPE_MAP:
-		break;
-	default:
-		return next_b;
-	}
-
-	if (ele_count == 0) {
-		return next_b;
-	}
-
-	if (msgpack_buf_peek_type(next_b, (uint32_t)(end - next_b)) ==
-			MSGPACK_TYPE_EXT) {
-		msgpack_type type2;
-		next_b = msgpack_parse(next_b, end, &count, &type2, &has_nonstorage,
-				&not_compact);
-
-		if (next_b == NULL) {
-			return NULL;
-		}
-
-		if (type == MSGPACK_TYPE_MAP) {
-			next_b = msgpack_parse(next_b, end, &count, &type2, &has_nonstorage,
-					&not_compact);
-			ele_count--;
-
-			if (next_b == NULL) {
-				return NULL;
-			}
-		}
-
-		ele_count--;
-	}
-
-	if (type == MSGPACK_TYPE_LIST) {
-		for (uint32_t i = 0; i < ele_count; i++) {
-			next_b = check_map_keys_internal(next_b, end);
-
-			if (next_b == NULL) {
-				return NULL;
-			}
-		}
-	}
-	else { // MAPs
-		ele_count /= 2;
-
-		for (uint32_t i = 0; i < ele_count; i++) {
-			if (! map_is_key(next_b, (uint32_t)(end - next_b))) {
-				return NULL;
-			}
-
-			next_b = check_map_keys_internal(next_b, end);
-
-			if (next_b == NULL) {
-				return NULL;
-			}
-
-			next_b = check_map_keys_internal(next_b, end);
-
-			if (next_b == NULL) {
-				return NULL;
-			}
-		}
-	}
-
-	return next_b;
-}
-
-// Return true to need fix.
-//static bool
-//cdt_check_map_keys_recursive(const uint8_t *buf, uint32_t sz, backup_config *bc)
-//{
-//	msgpack_type type = msgpack_buf_peek_type(buf, sz);
-//	cdt_stats *stats = NULL;
-//
-//	switch (type) {
-//	case MSGPACK_TYPE_LIST:
-//		stats = &bc->cdt_list;
-//		break;
-//	case MSGPACK_TYPE_MAP:
-//		stats = &bc->cdt_map;
-//		break;
-//	default:
-//		return false;
-//	}
-//
-//	cf_atomic32_incr(&stats->top_count);
-//
-//	if (check_map_keys_internal(buf, buf + sz, stats, 0) == NULL) {
-//		return true;
-//	}
-//
-//	return false;
-//}
-
-//// Return true to log the record.
-//static bool
-//cdt_check_map_keys(aerospike *as, as_record *rec, backup_config *bc)
-//{
-//	bool need_log = false; // log record if any bin is corrupt
-//
-//	for (int32_t i = 0; i < rec->bins.size; ++i) {
-//		as_bin *bin = &rec->bins.entries[i];
-//		as_val *val = (as_val *)bin->valuep;
-//
-//		if (val->type != AS_BYTES) {
-//			continue;
-//		}
-//
-//		as_bytes *b = (as_bytes *)val;
-//		as_bytes_type b_type = as_bytes_get_type(b);
-//
-//		if (b_type != AS_BYTES_LIST && b_type != AS_BYTES_MAP) {
-//			continue;
-//		}
-//
-//		uint8_t *buf = as_bytes_get(b);
-//		uint32_t buf_sz = as_bytes_size(b);
-//		bool check = cdt_check_map_keys_recursive(buf, buf_sz, bc);
-//
-//		if (check) {
-//			need_log = true;
-//		}
-//	}
-//
-//	return need_log;
-//}
-
 static void
 cdt_check_set_cannotfix(const msgpack_in *mp, cdt_fix *cf, cdt_stats *stat)
 {
@@ -278,8 +102,7 @@ cdt_map_dup_key_check(uint32_t ele_count, const uint8_t *contents,
 
 // Return true for need fix.
 static bool
-cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
-		bool check_map_keys)
+cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st)
 {
 	msgpack_in mp = {
 			.buf = buf,
@@ -316,40 +139,7 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 		cf->ele_count = ele_count;
 		cf->contents = mp.buf + mp.offset;
 
-		if (check_map_keys) {
-			for (uint32_t i = 0; i < ele_count; i++) {
-				const uint8_t *start = mp.buf + mp.offset;
-				uint32_t sz = msgpack_sz_rep(&mp, 1);
-
-				if (sz == 0 || mp.has_nonstorage) {
-					cdt_check_set_cannotfix(&mp, cf, st);
-					return false;
-				}
-
-				if (! map_is_key(start, sz)) {
-					cf->need_log = true;
-					atomic_incr(&st->cf_invalidkey);
-					return false;
-				}
-
-				start = mp.buf + mp.offset;
-				sz = msgpack_sz_rep(&mp, 1);
-
-				if (sz == 0 || mp.has_nonstorage) {
-					cdt_check_set_cannotfix(&mp, cf, st);
-					return false;
-				}
-
-				const uint8_t *end = mp.buf + mp.offset;
-
-				if (check_map_keys_internal(start, end) == NULL) {
-					cf->need_log = true;
-					atomic_incr(&st->cf_invalidkey);
-					return false;
-				}
-			}
-		}
-		else if (msgpack_sz_rep(&mp, 2 * ele_count) == 0 || mp.has_nonstorage) {
+		if (msgpack_sz_rep(&mp, 2 * ele_count) == 0 || mp.has_nonstorage) {
 			cdt_check_set_cannotfix(&mp, cf, st);
 			return false;
 		}
@@ -375,47 +165,19 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 	}
 
 	msgpack_in mp_prev = mp;
-	const uint8_t *start = mp.buf + mp.offset;
-	uint32_t ele_sz = msgpack_sz_rep(&mp, 1);
-
-	if (ele_sz == 0 || mp.has_nonstorage) {
-		cdt_check_set_cannotfix(&mp, cf, st);
-		return false;
-	}
-
-	if (check_map_keys && ! map_is_key(start, ele_sz)) {
-		cf->need_log = true;
-		atomic_incr(&st->cf_invalidkey);
-		return false;
-	}
-
-	start = mp.buf + mp.offset;
 
 	if (msgpack_sz_rep(&mp, 1) == 0 || mp.has_nonstorage) {
 		cdt_check_set_cannotfix(&mp, cf, st);
 		return false;
 	}
 
-	const uint8_t *end = mp.buf + mp.offset;
-
-	if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
-		cf->need_log = true;
-		atomic_incr(&st->cf_invalidkey);
+	if (msgpack_sz_rep(&mp, 1) == 0 || mp.has_nonstorage) {
+		cdt_check_set_cannotfix(&mp, cf, st);
 		return false;
 	}
 
 	for (uint32_t i = 1; i < ele_count - 1; i++) {
-		const uint8_t *start = mp.buf + mp.offset;
 		msgpack_cmp_type cmp = msgpack_cmp(&mp_prev, &mp);
-		uint32_t ele_sz = (uint32_t)(mp.buf + mp.offset - start);
-
-		if (check_map_keys && ! map_is_key(start, ele_sz)) {
-			cf->need_log = true;
-			atomic_incr(&st->cf_invalidkey);
-			return false;
-		}
-
-		start = mp.buf + mp.offset;
 
 		if (msgpack_sz(&mp_prev) == 0 || msgpack_sz(&mp) == 0 ||
 				mp.has_nonstorage) {
@@ -459,14 +221,6 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 			atomic_incr(&st->cf_corrupt);
 			return false;
 		}
-
-		const uint8_t *end = mp.buf + mp.offset;
-
-		if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
-			cf->need_log = true;
-			atomic_incr(&st->cf_invalidkey);
-			return false;
-		}
 	}
 
 	cf->content_sz = (uint32_t)(mp.buf + mp.offset - cf->contents);
@@ -475,9 +229,7 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 
 // Return true for need fix.
 static bool
-cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
-		bool check_map_keys)
-//		backup_config *bc)
+cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st)
 {
 	msgpack_in mp = {
 			.buf = buf,
@@ -514,25 +266,7 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 		cf->ele_count = ele_count;
 		cf->contents = mp.buf + mp.offset;
 
-		if (check_map_keys) {
-			for (uint32_t i = 0; i < ele_count; i++) {
-				const uint8_t *start = mp.buf + mp.offset;
-
-				if (msgpack_sz_rep(&mp, 1) == 0 || mp.has_nonstorage) {
-					cdt_check_set_cannotfix(&mp, cf, st);
-					return false;
-				}
-
-				const uint8_t *end = mp.buf + mp.offset;
-
-				if (check_map_keys_internal(start, end) == NULL) {
-					cf->need_log = true;
-					atomic_incr(&st->cf_invalidkey);
-					return false;
-				}
-			}
-		}
-		else if (msgpack_sz_rep(&mp, ele_count) == 0 || mp.has_nonstorage) {
+		if (msgpack_sz_rep(&mp, ele_count) == 0 || mp.has_nonstorage) {
 			cdt_check_set_cannotfix(&mp, cf, st);
 			return false;
 		}
@@ -551,25 +285,14 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 	}
 
 	msgpack_in mp_prev = mp;
-	const uint8_t *start = mp.buf + mp.offset;
 
 	if (msgpack_sz_rep(&mp, 1) == 0 || mp.has_nonstorage) {
 		cdt_check_set_cannotfix(&mp, cf, st);
 		return false;
 	}
 
-	const uint8_t *end = mp.buf + mp.offset;
-
-	if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
-		cf->need_log = true;
-		atomic_incr(&st->cf_invalidkey);
-		return false;
-	}
-
 	for (uint32_t i = 1; i < ele_count - 1; i++) {
-		const uint8_t *start = mp.buf + mp.offset;
 		msgpack_cmp_type cmp = msgpack_cmp(&mp_prev, &mp);
-		const uint8_t *end = mp.buf + mp.offset;
 
 		if (cmp != MSGPACK_CMP_LESS && cmp != MSGPACK_CMP_EQUAL) {
 			if (mp.has_nonstorage || (ele_count - i - 2 != 0 &&
@@ -598,12 +321,6 @@ cdt_list_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st,
 			atomic_incr(&st->cf_corrupt);
 			return false;
 		}
-
-		if (check_map_keys && check_map_keys_internal(start, end) == NULL) {
-			cf->need_log = true;
-			atomic_incr(&st->cf_invalidkey);
-			return false;
-		}
 	}
 
 	if (mp.has_nonstorage) {
@@ -624,13 +341,9 @@ cdt_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, backup_config *bc)
 {
 	switch (msgpack_buf_peek_type(buf, sz)) {
 	case MSGPACK_TYPE_LIST:
-		atomic_incr(&bc->cdt_list.count);
-		return cdt_list_need_fix(buf, sz, cf, &bc->cdt_list,
-				bc->check_map_keys);
+		return cdt_list_need_fix(buf, sz, cf, &bc->cdt_list);
 	case MSGPACK_TYPE_MAP:
-		atomic_incr(&bc->cdt_map.count);
-		return cdt_map_need_fix(buf, sz, cf, &bc->cdt_map,
-				bc->check_map_keys);
+		return cdt_map_need_fix(buf, sz, cf, &bc->cdt_map);
 	default:
 		break;
 	}

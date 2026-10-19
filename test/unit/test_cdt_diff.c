@@ -19,9 +19,9 @@
 // random input.
 // - Strict rule: the client's msgpack deserializer (as_unpack_val) must fail
 //   exactly when the walk reports OVER or EMPTY_OVER.
-// - Key rule: the old recursive check_map_keys_internal() must fail exactly
-//   when the walk reports INVALID_KEY. Inputs stay shallow so it cannot
-//   overflow the stack.
+// - Key rule: the map-key check asvalidation used before the walker (a
+//   recursive function, copied below unchanged) must fail exactly when the walk
+//   reports INVALID_KEY. Inputs stay shallow so it cannot overflow the stack.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,8 +29,9 @@
 #include <aerospike/as_msgpack.h>
 #include <aerospike/as_val.h>
 
-#include <cdt_check.h>
 #include <cdt_walk.h>
+
+#include "msgpack_in.h"
 
 #include "test_buf.h"
 
@@ -50,6 +51,127 @@ typedef struct gen_cfg_s {
 
 static uint64_t g_rng;
 static uint32_t g_key_seq;
+
+
+//==========================================================
+// Reference: the map-key check from before the walker.
+//
+
+static bool
+map_is_key(const uint8_t *buf, uint32_t buf_sz)
+{
+	msgpack_in mp = {
+			.buf = (uint8_t *)buf,
+			.buf_sz = buf_sz
+	};
+
+	msgpack_type type = msgpack_peek_type(&mp);
+
+	switch (type) {
+	case MSGPACK_TYPE_NEGINT:
+	case MSGPACK_TYPE_INT:
+	case MSGPACK_TYPE_STRING:
+		return true;
+	case MSGPACK_TYPE_BYTES: {
+		uint32_t len;
+		const uint8_t *b = msgpack_get_bin(&mp, &len);
+
+		if (b == NULL || len == 0 || *b != AS_BYTES_BLOB) {
+			break;
+		}
+
+		return true;
+	}
+	default:
+		break;
+	}
+
+	return false;
+}
+
+static const uint8_t *
+old_check_map_keys(const uint8_t *b, const uint8_t *end)
+{
+	bool has_nonstorage = false;
+	bool not_compact = false;
+	uint32_t count = 1;
+	msgpack_type type;
+	const uint8_t *next_b = msgpack_parse(b, end, &count, &type,
+			&has_nonstorage, &not_compact);
+	uint32_t ele_count = count - 1;
+
+	if (next_b == NULL) {
+		return NULL;
+	}
+
+	switch (type) {
+	case MSGPACK_TYPE_LIST:
+	case MSGPACK_TYPE_MAP:
+		break;
+	default:
+		return next_b;
+	}
+
+	if (ele_count == 0) {
+		return next_b;
+	}
+
+	if (msgpack_buf_peek_type(next_b, (uint32_t)(end - next_b)) ==
+			MSGPACK_TYPE_EXT) {
+		msgpack_type type2;
+		next_b = msgpack_parse(next_b, end, &count, &type2, &has_nonstorage,
+				&not_compact);
+
+		if (next_b == NULL) {
+			return NULL;
+		}
+
+		if (type == MSGPACK_TYPE_MAP) {
+			next_b = msgpack_parse(next_b, end, &count, &type2, &has_nonstorage,
+					&not_compact);
+			ele_count--;
+
+			if (next_b == NULL) {
+				return NULL;
+			}
+		}
+
+		ele_count--;
+	}
+
+	if (type == MSGPACK_TYPE_LIST) {
+		for (uint32_t i = 0; i < ele_count; i++) {
+			next_b = old_check_map_keys(next_b, end);
+
+			if (next_b == NULL) {
+				return NULL;
+			}
+		}
+	}
+	else { // MAPs
+		ele_count /= 2;
+
+		for (uint32_t i = 0; i < ele_count; i++) {
+			if (! map_is_key(next_b, (uint32_t)(end - next_b))) {
+				return NULL;
+			}
+
+			next_b = old_check_map_keys(next_b, end);
+
+			if (next_b == NULL) {
+				return NULL;
+			}
+
+			next_b = old_check_map_keys(next_b, end);
+
+			if (next_b == NULL) {
+				return NULL;
+			}
+		}
+	}
+
+	return next_b;
+}
 
 
 //==========================================================
@@ -408,7 +530,7 @@ test_keys(void)
 		gen_value(&tb, &cfg, 1, true);
 
 		cdt_walk_result res;
-		const uint8_t *old_end = check_map_keys_internal(tb.buf, tb.buf + tb.sz);
+		const uint8_t *old_end = old_check_map_keys(tb.buf, tb.buf + tb.sz);
 		bool old_ok = old_end != NULL;
 
 		cdt_walk(tb.buf, tb.sz, CDT_WALK_MAX_DEPTH, true, &res);

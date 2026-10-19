@@ -184,11 +184,9 @@ $(DIR_TEST_BIN)/test_cdt_walk: $(DIR_TEST)/test_cdt_walk.c $(DIR_TEST)/test_buf.
 		$(DIR_SRC)/cdt_walk.c
 
 $(DIR_TEST_BIN)/test_cdt_diff: $(DIR_TEST)/test_cdt_diff.c $(DIR_TEST)/test_buf.h \
-		$(DIR_SRC)/cdt_walk.c $(DIR_SRC)/cdt_check.c $(DIR_SRC)/msgpack_in.c \
-		$(INCS) | $(DIR_TEST_BIN)
+		$(DIR_SRC)/cdt_walk.c $(DIR_SRC)/msgpack_in.c $(INCS) | $(DIR_TEST_BIN)
 	$(CC) $(TEST_CFLAGS) -fno-sanitize=alignment $(TEST_INCLUDES) -o $@ \
-		$(DIR_TEST)/test_cdt_diff.c \
-		$(DIR_SRC)/cdt_walk.c $(DIR_SRC)/cdt_check.c $(DIR_SRC)/msgpack_in.c \
+		$(DIR_TEST)/test_cdt_diff.c $(DIR_SRC)/cdt_walk.c $(DIR_SRC)/msgpack_in.c \
 		$(TEST_LIBRARIES)
 
 $(BACKUP): $(BACKUP_OBJ) | $(DIR_BIN)

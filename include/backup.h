@@ -38,6 +38,9 @@
 
 #define MAX_PARTITIONS 4096
 
+#define DEFAULT_CDT_MAX_DEPTH 64                    ///< Server 8.2 rejects lists/maps nested
+                                                    ///  deeper than this.
+
 #define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_SEQ_CST)
 #define atomic_add(_target, _value) __atomic_add_fetch(_target, _value, __ATOMIC_SEQ_CST)
 #define atomic_load(_target) __atomic_load_n(_target, __ATOMIC_SEQ_CST)
@@ -123,9 +126,15 @@ typedef struct {
 
 	bool cdt_fix;
 	bool check_map_keys;
+	bool cdt_depth_only;                ///< Only run the depth and map-key walk.
+	uint32_t cdt_max_depth;             ///< Deepest list/map nesting level allowed.
 
 	cdt_stats cdt_list;
 	cdt_stats cdt_map;
+
+	uint32_t cdt_depth_over;            ///< Bins with a non-empty list/map nested too deep.
+	uint32_t cdt_depth_over_strict;     ///< Bins too deep only through empty lists/maps.
+	uint32_t cdt_fix_skipped_depth;     ///< Fixes skipped because the record is too deep.
 } backup_config;
 
 ///
