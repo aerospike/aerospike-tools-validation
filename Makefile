@@ -198,7 +198,7 @@ $(DIR_TEST_BIN)/gen_cdt: test/e2e/gen_cdt.c test/e2e/ref_walk.c test/e2e/ref_wal
 		$(TEST_LIBRARIES)
 
 # Needs docker; see test/e2e/run.sh.
-e2e: $(BACKUP) $(DIR_TEST_BIN)/gen_cdt
+e2e: all $(DIR_TEST_BIN)/gen_cdt
 	test/e2e/run.sh
 
 $(BACKUP): $(BACKUP_OBJ) | $(DIR_BIN)
