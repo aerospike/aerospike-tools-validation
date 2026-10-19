@@ -64,7 +64,12 @@ typedef enum {
 	SHAPE_FLAGS_LIST_AT,
 	SHAPE_FLAGS_MAP_AT,
 	SHAPE_FLAGS0_AT,
-	SHAPE_MAP_VALUE_CHAIN
+	SHAPE_MAP_VALUE_CHAIN,
+	SHAPE_ORDERED_CHAIN,
+	SHAPE_KORDERED_CHAIN,
+	SHAPE_MIXED_CHAIN,
+	SHAPE_MIXED_EMPTY_AT,
+	SHAPE_MIXED_FLAGS_AT
 } shape;
 
 typedef struct deep_case_s {
@@ -118,8 +123,33 @@ static const deep_case violators[] = {
 	{ SHAPE_EMPTY_AT, 64 }, { SHAPE_EMPTY_AT, 65 }, { SHAPE_EMPTY_AT, 66 },
 	{ SHAPE_FLAGS_LIST_AT, 65 },
 	{ SHAPE_FLAGS_MAP_AT, 65 },
-	{ SHAPE_FLAGS0_AT, 65 }
+	{ SHAPE_FLAGS0_AT, 65 },
+	{ SHAPE_ORDERED_CHAIN, 64 }, { SHAPE_ORDERED_CHAIN, 65 },
+	{ SHAPE_KORDERED_CHAIN, 64 }, { SHAPE_KORDERED_CHAIN, 65 },
+	{ SHAPE_MIXED_CHAIN, 64 }, { SHAPE_MIXED_CHAIN, 65 },
+	{ SHAPE_MIXED_CHAIN, 200 },
+	{ SHAPE_MIXED_EMPTY_AT, 65 },
+	{ SHAPE_MIXED_FLAGS_AT, 65 }
 };
+
+// One level of a mixed chain: the bytes before the child, which is always the
+// last element of the level.
+static const struct {
+	uint8_t prefix[16];
+	uint32_t sz;
+} mixed_levels[] = {
+	{ { 0x91 }, 1 },
+	{ { 0x92, 0xc7, 0x00, 0x01 }, 4 },
+	{ { 0x82, 0xc7, 0x00, 0x01, 0xc0, 0x01 }, 6 },
+	{ { 0x82, 0xc7, 0x00, 0x03, 0xc0, 0xa2, 0x03, 'a' }, 8 },
+	{ { 0xdc, 0x00, 0x01 }, 3 },
+	{ { 0xdf, 0x00, 0x00, 0x00, 0x01, 0xcd, 0x01, 0x00 }, 8 },
+	{ { 0x93, 0xa3, 0x17, '{', '}', 0xcb, 0, 0, 0, 0, 0, 0, 0, 0 }, 14 },
+	{ { 0x82, 0xc4, 0x02, 0x04, 0xff, 0xc0, 0xa2, 0x03, 'b' }, 9 },
+	{ { 0x92, 0xa5, 0x03, 0x91, 0x91, 0x91, 0x91 }, 7 }
+};
+
+#define N_MIXED_LEVELS (sizeof(mixed_levels) / sizeof(mixed_levels[0]))
 
 #define N_VIOLATORS (sizeof(violators) / sizeof(violators[0]))
 
@@ -157,6 +187,7 @@ shape_type(shape s)
 	switch (s) {
 	case SHAPE_MAP_CHAIN:
 	case SHAPE_MAP_VALUE_CHAIN:
+	case SHAPE_KORDERED_CHAIN:
 		return AS_BYTES_MAP;
 	default:
 		return AS_BYTES_LIST;
@@ -554,6 +585,47 @@ build_deep(wbuf *wb, shape s, uint32_t depth)
 		wb_str(wb, "deep", 4);
 		build_deep(wb, SHAPE_LIST_CHAIN, depth - 1);
 		break;
+	case SHAPE_ORDERED_CHAIN:
+		for (uint32_t i = 0; i < depth; i++) {
+			wb_list_hdr(wb, 2);
+			wb_ext_flags(wb, ORDERED_FLAG);
+		}
+
+		wb_int(wb, 1);
+		break;
+	case SHAPE_KORDERED_CHAIN:
+		for (uint32_t i = 0; i < depth; i++) {
+			wb_map_hdr(wb, 2);
+			wb_ext_flags(wb, ORDERED_FLAG);
+			wb_u8(wb, 0xc0);
+			wb_int(wb, 1);
+		}
+
+		wb_int(wb, 1);
+		break;
+	case SHAPE_MIXED_CHAIN:
+	case SHAPE_MIXED_EMPTY_AT:
+	case SHAPE_MIXED_FLAGS_AT: {
+		uint32_t n_levels = s == SHAPE_MIXED_CHAIN ? depth : depth - 1;
+
+		for (uint32_t i = 0; i < n_levels; i++) {
+			wb_raw(wb, mixed_levels[i % N_MIXED_LEVELS].prefix,
+					mixed_levels[i % N_MIXED_LEVELS].sz);
+		}
+
+		if (s == SHAPE_MIXED_CHAIN) {
+			wb_typed_raw(wb, 0x17, "{}", 2);
+		}
+		else if (s == SHAPE_MIXED_EMPTY_AT) {
+			wb_list_hdr(wb, 0);
+		}
+		else {
+			wb_map_hdr(wb, 1);
+			wb_ext_flags(wb, 3);
+			wb_u8(wb, 0xc0);
+		}
+		break;
+	}
 	}
 }
 

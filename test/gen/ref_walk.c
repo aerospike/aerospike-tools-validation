@@ -270,7 +270,7 @@ reference_walk(const uint8_t *buf, uint32_t sz, walk_result *res)
 		sp++;
 
 		if (is_map && p < end && (*p == 0xc7 || *p == 0xc8 || *p == 0xc9 ||
-				(*p >= 0xd4 && *p <= 0xd8))) {
+				(*p >= 0xd5 && *p <= 0xd8))) {
 			if (parse_el(&p, end, &count, &key_ok) != EL_EXT) {
 				res->corrupt = true;
 				break;
