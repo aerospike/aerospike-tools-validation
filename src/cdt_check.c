@@ -186,7 +186,7 @@ cdt_map_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf, cdt_stats *st)
 		}
 
 		if (cmp != MSGPACK_CMP_LESS) {
-			if (mp.has_nonstorage || (ele_count - i - 1 != 0 &&
+			if (mp.has_nonstorage || (ele_count - i - 2 != 0 &&
 					(msgpack_sz_rep(&mp, 2 * (ele_count - i - 2)) == 0 ||
 							mp.has_nonstorage))) {
 				cdt_check_set_cannotfix(&mp, cf, st);

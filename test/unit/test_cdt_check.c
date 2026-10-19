@@ -127,6 +127,39 @@ test_integers_near_start(void)
 }
 
 
+// An ordered list or map whose keys are out of order needs a fix, wherever the
+// first out-of-order key is. When it was the last key of a key-ordered map,
+// skipping the (zero) remaining pairs looked like a parse failure.
+static void
+test_order_violation_position(void)
+{
+	static const uint8_t kmap_last[] = {
+		0x83, 0xc7, 0x00, 0x01, 0xc0, 0xcd, 0x01, 0x2c, 0x01, 0xcd, 0x01, 0x2b,
+		0x02
+	};
+	static const uint8_t kmap_middle[] = {
+		0x84, 0xc7, 0x00, 0x01, 0xc0, 0x03, 0x01, 0x01, 0x02, 0x02, 0x03
+	};
+	static const uint8_t kmap_last_of_three[] = {
+		0x84, 0xc7, 0x00, 0x01, 0xc0, 0x01, 0x01, 0x03, 0x02, 0x02, 0x03
+	};
+	static const uint8_t list_last[] = { 0x94, 0xc7, 0x00, 0x01, 0x01, 0x03, 0x02 };
+	static const uint8_t list_middle[] = { 0x94, 0xc7, 0x00, 0x01, 0x03, 0x01, 0x02 };
+
+	check("k-ordered map {300: 1, 299: 2}", kmap_last, sizeof(kmap_last),
+			(expected){ .need_fix = true, .nf_order = 1 });
+	check("k-ordered map {3: 1, 1: 2, 2: 3}", kmap_middle, sizeof(kmap_middle),
+			(expected){ .need_fix = true, .nf_order = 1 });
+	check("k-ordered map {1: 1, 3: 2, 2: 3}", kmap_last_of_three,
+			sizeof(kmap_last_of_three),
+			(expected){ .need_fix = true, .nf_order = 1 });
+	check("ordered list [1, 3, 2]", list_last, sizeof(list_last),
+			(expected){ .need_fix = true, .nf_order = 1 });
+	check("ordered list [3, 1, 2]", list_middle, sizeof(list_middle),
+			(expected){ .need_fix = true, .nf_order = 1 });
+}
+
+
 //==========================================================
 // Main.
 //
@@ -135,6 +168,7 @@ int
 main(void)
 {
 	test_integers_near_start();
+	test_order_violation_position();
 
 	printf("test_cdt_check: %u checks, %u failures\n", g_checks, g_failures);
 
