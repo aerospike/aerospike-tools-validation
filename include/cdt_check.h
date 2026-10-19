@@ -50,6 +50,7 @@ typedef struct cdt_fix_s {
 // Public API.
 //
 
-const uint8_t *check_map_keys_internal(const uint8_t *b, const uint8_t *end);
+// Order, duplicate-key, padding and corruption checks of one list/map bin.
+// Map keys and depth are checked by cdt_walk().
 bool cdt_need_fix(const uint8_t *buf, uint32_t sz, cdt_fix *cf,
 		backup_config *bc);
