@@ -132,11 +132,36 @@ is_meta_ext(const uint8_t *p, const uint8_t *end)
 	return b == 0xc8 || b == 0xc9 || (b >= 0xd5 && b <= 0xd8);
 }
 
+// Whether the scalar at 'ele' may be a map key: an integer, or a string/blob
+// whose first content byte says string or blob. The caller has already parsed
+// the element, so its bytes are known to be in the buffer.
+static inline bool
+scalar_key_ok(const uint8_t *ele)
+{
+	const hdr_info *h = &hdr_table[ele[0]];
+
+	switch (h->kind) {
+	case HDR_FIXED:
+		return h->key_ok;
+	case HDR_FIXRAW:
+		return (ele[0] & 0x1f) != 0 &&
+				(ele[1] == AS_STRING_TYPE || ele[1] == AS_BLOB_TYPE);
+	case HDR_RAW: {
+		const uint8_t *data = ele + 1 + h->n;
+
+		return read_be(ele + 1, h->n) != 0 &&
+				(data[0] == AS_STRING_TYPE || data[0] == AS_BLOB_TYPE);
+	}
+	default:
+		return false;
+	}
+}
+
 // Parses the header of the element at *pp. A list/map returns its element
 // count and leaves *pp at its first element; anything else is skipped whole,
-// ext payloads included. key_ok says whether a scalar is a valid map key.
+// ext payloads included.
 static inline ele_kind
-next_ele(const uint8_t **pp, const uint8_t *end, uint32_t *count, bool *key_ok)
+next_ele(const uint8_t **pp, const uint8_t *end, uint32_t *count)
 {
 	const uint8_t *p = *pp;
 
@@ -148,8 +173,6 @@ next_ele(const uint8_t **pp, const uint8_t *end, uint32_t *count, bool *key_ok)
 	const hdr_info *h = &hdr_table[b];
 	size_t avail = (size_t)(end - p);
 	uint64_t len;
-
-	*key_ok = h->key_ok;
 
 	if (h->kind == HDR_FIXED) {
 		if (h->n > avail) {
@@ -210,7 +233,6 @@ next_ele(const uint8_t **pp, const uint8_t *end, uint32_t *count, bool *key_ok)
 		return ELE_CORRUPT;
 	}
 
-	*key_ok = len != 0 && (p[0] == AS_STRING_TYPE || p[0] == AS_BLOB_TYPE);
 	*pp = p + len;
 
 	return ELE_SCALAR;
@@ -225,9 +247,9 @@ void
 cdt_walk(const uint8_t *buf, uint32_t buf_sz, uint32_t max_depth,
 		bool check_keys, cdt_walk_result *res)
 {
-	// Parent levels; the innermost open level lives in rem and map.
+	// Parent levels; the innermost open level lives in rem and keys.
 	uint32_t saved_rem[CDT_WALK_MAX_DEPTH];
-	bool saved_map[CDT_WALK_MAX_DEPTH];
+	bool saved_keys[CDT_WALK_MAX_DEPTH];
 	uint32_t n_open = 0;
 	const uint8_t *p = buf;
 	const uint8_t *end = buf + buf_sz;
@@ -238,24 +260,25 @@ cdt_walk(const uint8_t *buf, uint32_t buf_sz, uint32_t max_depth,
 		max_depth = CDT_WALK_MAX_DEPTH;
 	}
 
-	// Elements left in the innermost open level. Before the first list/map
-	// opens, that is the top-level value itself.
+	// Elements left in the innermost open level, and whether its keys are
+	// checked (a map, with check_keys). Before the first list/map opens, that
+	// level is the top-level value itself.
 	uint32_t rem = 1;
-	bool map = false;
+	bool keys = false;
 
 	while (true) {
 		while (rem != 0) {
 			// A map counts down two per pair, so keys sit at even counts.
-			bool is_key = map && (rem & 1) == 0;
+			bool is_key = keys && (rem & 1) == 0;
+			const uint8_t *ele = p;
 			uint32_t count;
-			bool key_ok;
 
 			rem--;
 
-			ele_kind kind = next_ele(&p, end, &count, &key_ok);
+			ele_kind kind = next_ele(&p, end, &count);
 
 			if (kind == ELE_SCALAR) {
-				if (is_key && check_keys && ! key_ok) {
+				if (is_key && ! scalar_key_ok(ele)) {
 					flags |= CDT_WALK_INVALID_KEY;
 				}
 
@@ -269,7 +292,7 @@ cdt_walk(const uint8_t *buf, uint32_t buf_sz, uint32_t max_depth,
 
 			uint32_t level = n_open + 1;
 
-			if (is_key && check_keys) {
+			if (is_key) {
 				flags |= CDT_WALK_INVALID_KEY;
 			}
 
@@ -305,8 +328,8 @@ cdt_walk(const uint8_t *buf, uint32_t buf_sz, uint32_t max_depth,
 			if (child_map && p < end && is_meta_ext(p, end)) {
 				uint32_t dummy;
 
-				if (next_ele(&p, end, &dummy, &key_ok) != ELE_SCALAR ||
-						next_ele(&p, end, &dummy, &key_ok) != ELE_SCALAR) {
+				if (next_ele(&p, end, &dummy) != ELE_SCALAR ||
+						next_ele(&p, end, &dummy) != ELE_SCALAR) {
 					flags |= CDT_WALK_CORRUPT;
 					goto stop;
 				}
@@ -316,10 +339,10 @@ cdt_walk(const uint8_t *buf, uint32_t buf_sz, uint32_t max_depth,
 
 			if (n_eles != 0) {
 				saved_rem[n_open] = rem;
-				saved_map[n_open] = map;
+				saved_keys[n_open] = keys;
 				n_open++;
 				rem = n_eles;
-				map = child_map;
+				keys = child_map && check_keys;
 			}
 		}
 
@@ -329,7 +352,7 @@ cdt_walk(const uint8_t *buf, uint32_t buf_sz, uint32_t max_depth,
 
 		n_open--;
 		rem = saved_rem[n_open];
-		map = saved_map[n_open];
+		keys = saved_keys[n_open];
 	}
 
 	res->flags = flags;
