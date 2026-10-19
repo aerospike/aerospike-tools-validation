@@ -11,10 +11,14 @@ benchmarking asvalidation against them. Nothing here is part of the shipped tool
 | `docker/env.sh` | Server images (pinned by digest), network and container names, CPU sets. Every value can be overridden from the environment. |
 | `docker/testbed.sh` | `image`, `up`, `down`, `run`, `srv-cpu` helpers. |
 | `docker/aerospike-perf.conf` | One in-memory namespace per dataset. |
+| `docker/aerospike-upgrade.conf` | Two file-backed namespaces (`up`, `up2`) for the upgrade repro. |
 | `gen/gen_cdt.c` | Dataset loader (`load`), expected-class scanner (`expect`) and single-record hex dump (`dump`). |
+| `gen/ref_walk.c` | Reference depth walk shared by `gen_cdt` and `probe`. |
 | `bench/load.sh` | Loads every dataset at its benchmark size and prints the expected classes. |
 | `bench/run.sh`, `bench/stats.py` | A/B (or A/A) benchmark runner and summary. |
 | `bench/crash.sh` | Reproduces the stack overflow on deeply nested data. |
+| `upgrade/run.sh` | Loads deep data on 8.1, backs it up, swaps the server to 8.2 on the same data and shows what fails. |
+| `upgrade/probe.c`, `upgrade/asval.lua` | Per-key read, scan, rewrite and UDF checks, tallied by expected class. |
 
 ## Quick start
 
@@ -78,6 +82,20 @@ classifies each bin with a simple reference walk, because the server may store
 different bytes than were sent. 8.1 rejects maps whose keys are lists or maps
 ("map has invalid key type"), so key nesting cannot be loaded and is covered by
 unit tests instead.
+
+## Upgrade repro
+
+```sh
+test/upgrade/run.sh | tee /tmp/upgrade-report.txt    # about 30 s
+```
+
+It recreates two Docker volumes, starts 8.1 on `aerospike-upgrade.conf`, loads
+4,200 records (every other one with a deep bin) plus 4 records nested 200,000
+levels deep, runs asbackup, then restarts the server container on 8.2 with the
+same data volume. Each probe result is tallied by the class the reference walk
+computes from the stored bytes (`ok`, `strict_only`, `over`). The server is left
+running 8.2 with the upgrade config; run `testbed.sh up 81` and `bench/load.sh`
+to go back to the benchmark setup.
 
 ## Reading a benchmark
 

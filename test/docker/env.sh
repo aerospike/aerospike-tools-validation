@@ -7,6 +7,9 @@
 # 8.2.0.0 EE, first release that rejects list/map values nested deeper than 64.
 : "${ASVAL_SERVER_82:=artifact.aerospike.io/database-docker-test-local/aerospike-server-enterprise@sha256:175dd9a16c2b6d0128309ad528587cfbc01313f51165f7c1c94f334a33328760}"
 
+# asbackup/asrestore 4.5.9, used by the upgrade repro.
+: "${ASVAL_BACKUP_IMAGE:=aerospike/aerospike-asbackup@sha256:f5bbce0f7a74f03348032f3a1ca5b79fa55b242c399995fc0e59949816ccd86a}"
+
 : "${ASVAL_NET:=asval-net}"
 : "${ASVAL_SRV:=asval-srv}"
 
