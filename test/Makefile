@@ -16,13 +16,17 @@ DIR_BIN := bin
 
 .PHONY: all clean
 
-all: $(DIR_BIN)/gen_cdt
+all: $(DIR_BIN)/gen_cdt $(DIR_BIN)/probe
 
 $(DIR_BIN):
 	mkdir -p $@
 
-$(DIR_BIN)/gen_cdt: gen/gen_cdt.c | $(DIR_BIN)
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $< $(LIBRARIES)
+$(DIR_BIN)/gen_cdt: gen/gen_cdt.c gen/ref_walk.c gen/ref_walk.h | $(DIR_BIN)
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ gen/gen_cdt.c gen/ref_walk.c $(LIBRARIES)
+
+$(DIR_BIN)/probe: upgrade/probe.c gen/ref_walk.c gen/ref_walk.h | $(DIR_BIN)
+	$(CC) $(CFLAGS) $(INCLUDES) -Igen -o $@ upgrade/probe.c gen/ref_walk.c \
+		$(LIBRARIES)
 
 clean:
 	rm -rf $(DIR_BIN)
