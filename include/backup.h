@@ -40,6 +40,7 @@
 
 #define DEFAULT_CDT_MAX_DEPTH 64                    ///< Server 8.2 rejects lists/maps nested
                                                     ///  deeper than this.
+#define EXIT_CDT_DEPTH 3                            ///< Exit code for --fail-on-cdt-depth.
 
 #define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_SEQ_CST)
 #define atomic_add(_target, _value) __atomic_add_fetch(_target, _value, __ATOMIC_SEQ_CST)
@@ -127,6 +128,7 @@ typedef struct {
 	bool cdt_fix;
 	bool check_map_keys;
 	bool cdt_depth_only;                ///< Only run the depth and map-key walk.
+	bool fail_on_cdt_depth;             ///< Exit with EXIT_CDT_DEPTH if a bin is too deep.
 	uint32_t cdt_max_depth;             ///< Deepest list/map nesting level allowed.
 
 	cdt_stats cdt_list;
@@ -135,6 +137,8 @@ typedef struct {
 	uint32_t cdt_depth_over;            ///< Bins with a non-empty list/map nested too deep.
 	uint32_t cdt_depth_over_strict;     ///< Bins too deep only through empty lists/maps.
 	uint32_t cdt_fix_skipped_depth;     ///< Fixes skipped because the record is too deep.
+	uint32_t cdt_deepest;               ///< Deepest list/map level seen, at most
+	                                    ///  cdt_max_depth + 1.
 } backup_config;
 
 ///
@@ -180,4 +184,5 @@ typedef struct {
 	                                    ///  processed cluster node.
 	uint64_t byte_count_node;           ///< Counts the number of bytes written to all backup files
 	                                    ///  for the currently processed cluster node.
+	uint32_t cdt_deepest;               ///< Deepest list/map level seen in this node's scan.
 } per_node_context;
