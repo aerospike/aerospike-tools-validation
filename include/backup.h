@@ -42,10 +42,12 @@
                                                     ///  deeper than this.
 #define EXIT_CDT_DEPTH 3                            ///< Exit code for --fail-on-cdt-depth.
 
-#define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_SEQ_CST)
-#define atomic_add(_target, _value) __atomic_add_fetch(_target, _value, __ATOMIC_SEQ_CST)
-#define atomic_load(_target) __atomic_load_n(_target, __ATOMIC_SEQ_CST)
-#define atomic_store(_target, _value) __atomic_store_n(_target, _value, __ATOMIC_SEQ_CST)
+// Only used for counters: nothing else is ordered by them, and final values
+// are read after the worker threads are joined.
+#define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_RELAXED)
+#define atomic_add(_target, _value) __atomic_add_fetch(_target, _value, __ATOMIC_RELAXED)
+#define atomic_load(_target) __atomic_load_n(_target, __ATOMIC_RELAXED)
+#define atomic_store(_target, _value) __atomic_store_n(_target, _value, __ATOMIC_RELAXED)
 
 ///
 /// The interface exposed by the backup file format encoder.
