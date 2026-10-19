@@ -125,7 +125,17 @@ TEST_CFLAGS := -std=gnu99 -g -O1 -fno-omit-frame-pointer \
 		-Wall -Wextra -Wconversion -Wsign-conversion -Wmissing-declarations \
 		-D_GNU_SOURCE -pthread
 
-TESTS := $(DIR_TEST_BIN)/test_cdt_walk
+TEST_INCLUDES := -I$(DIR_INC) -I$(DIR_TOML) \
+		-isystem $(CLIENTREPO)/src/include \
+		-isystem $(CLIENTREPO)/modules/common/src/include
+
+TEST_LIBRARIES := $(CLIENTREPO)/target/$(PLATFORM)/lib/libaerospike.a \
+		-lssl -lcrypto -lyaml -lpthread -lm -lz
+ifeq ($(OS), Linux)
+  TEST_LIBRARIES += -ldl -lrt
+endif
+
+TESTS := $(DIR_TEST_BIN)/test_cdt_walk $(DIR_TEST_BIN)/test_cdt_diff
 
 .PHONY: all clean ragel test
 
@@ -174,6 +184,14 @@ $(DIR_TEST_BIN)/test_cdt_walk: $(DIR_TEST)/test_cdt_walk.c $(DIR_TEST)/test_buf.
 		$(DIR_SRC)/cdt_walk.c $(DIR_INC)/cdt_walk.h | $(DIR_TEST_BIN)
 	$(CC) $(TEST_CFLAGS) -I$(DIR_INC) -o $@ $(DIR_TEST)/test_cdt_walk.c \
 		$(DIR_SRC)/cdt_walk.c
+
+$(DIR_TEST_BIN)/test_cdt_diff: $(DIR_TEST)/test_cdt_diff.c $(DIR_TEST)/test_buf.h \
+		$(DIR_SRC)/cdt_walk.c $(DIR_SRC)/cdt_check.c $(DIR_SRC)/msgpack_in.c \
+		$(DIR_INC)/cdt_walk.h $(DIR_INC)/cdt_check.h | $(DIR_TEST_BIN)
+	$(CC) $(TEST_CFLAGS) -fno-sanitize=alignment $(TEST_INCLUDES) -o $@ \
+		$(DIR_TEST)/test_cdt_diff.c \
+		$(DIR_SRC)/cdt_walk.c $(DIR_SRC)/cdt_check.c $(DIR_SRC)/msgpack_in.c \
+		$(TEST_LIBRARIES)
 
 $(BACKUP): $(BACKUP_OBJ) | $(DIR_BIN)
 	$(CC) $(LDFLAGS) -o $(BACKUP) $(BACKUP_OBJ) $(LIBRARIES)
