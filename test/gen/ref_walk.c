@@ -269,8 +269,11 @@ reference_walk(const uint8_t *buf, uint32_t sz, walk_result *res)
 		stack[sp].is_map = is_map;
 		sp++;
 
-		if (is_map && p < end && (*p == 0xc7 || *p == 0xc8 || *p == 0xc9 ||
-				(*p >= 0xd5 && *p <= 0xd8))) {
+		bool marker = end - p >= 4 && *p == 0xc7 && p[1] == 1 && p[2] == 0xff &&
+				p[3] <= 1;
+
+		if (is_map && p < end && ! marker && (*p == 0xc7 || *p == 0xc8 ||
+				*p == 0xc9 || (*p >= 0xd5 && *p <= 0xd8))) {
 			if (parse_el(&p, end, &count, &key_ok) != EL_EXT) {
 				res->corrupt = true;
 				break;
