@@ -65,19 +65,19 @@ typedef struct {
 } backup_encoder;
 
 typedef struct cdt_stats_s {
-	uint32_t count;
-	uint32_t fixed;
+	uint64_t count;
+	uint64_t fixed;
 
-	uint32_t need_fix;
-	uint32_t nf_failed;
-	uint32_t nf_order;
-	uint32_t nf_padding;
+	uint64_t need_fix;
+	uint64_t nf_failed;
+	uint64_t nf_order;
+	uint64_t nf_padding;
 
-	uint32_t cannot_fix;
-	uint32_t cf_dupkey; // map top level only
-	uint32_t cf_nonstorage;
-	uint32_t cf_corrupt;
-	uint32_t cf_invalidkey; // includes sub levels
+	uint64_t cannot_fix;
+	uint64_t cf_dupkey; // map top level only
+	uint64_t cf_nonstorage;
+	uint64_t cf_corrupt;
+	uint64_t cf_invalidkey; // includes sub levels
 } cdt_stats;
 
 ///
@@ -134,9 +134,9 @@ typedef struct {
 	cdt_stats cdt_list;
 	cdt_stats cdt_map;
 
-	uint32_t cdt_depth_over;            ///< Bins with a non-empty list/map nested too deep.
-	uint32_t cdt_depth_over_strict;     ///< Bins too deep only through empty lists/maps.
-	uint32_t cdt_fix_skipped_depth;     ///< Fixes skipped because the record is too deep.
+	uint64_t cdt_depth_over;            ///< Bins with a non-empty list/map nested too deep.
+	uint64_t cdt_depth_over_strict;     ///< Bins too deep only through empty lists/maps.
+	uint64_t cdt_fix_skipped_depth;     ///< Fixes skipped because the record is too deep.
 	uint32_t cdt_deepest;               ///< Deepest list/map level seen, at most
 	                                    ///  cdt_max_depth + 1.
 } backup_config;
