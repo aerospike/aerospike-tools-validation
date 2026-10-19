@@ -873,7 +873,8 @@ counter_thread_func(void *cont)
 	}
 
 	if (args->mach_fd != NULL && (fprintf(args->mach_fd,
-			"CDT_DEPTH:%u:%u:%u:%u\n", conf->cdt_max_depth, conf->cdt_deepest,
+			"CDT_DEPTH:%u:%u:%" PRIu64 ":%" PRIu64 "\n", conf->cdt_max_depth,
+			conf->cdt_deepest,
 			conf->cdt_depth_over, conf->cdt_depth_over_strict) < 0 ||
 			fflush(args->mach_fd) == EOF)) {
 		err_code("Error while writing machine-readable depth summary");
@@ -883,40 +884,40 @@ counter_thread_func(void *cont)
 	if (conf->check_map_keys) {
 		inf("check-map-keys = True");
 	}
-	inf("%10u Lists", conf->cdt_list.count);
-	inf("%10u   Unfixable", conf->cdt_list.cannot_fix);
-	inf("%10u     Has non-storage", conf->cdt_list.cf_nonstorage);
-	inf("%10u     Corrupted", conf->cdt_list.cf_corrupt);
+	inf("%10" PRIu64 " Lists", conf->cdt_list.count);
+	inf("%10" PRIu64 "   Unfixable", conf->cdt_list.cannot_fix);
+	inf("%10" PRIu64 "     Has non-storage", conf->cdt_list.cf_nonstorage);
+	inf("%10" PRIu64 "     Corrupted", conf->cdt_list.cf_corrupt);
 	if (conf->check_map_keys) {
-		inf("%10u     Invalid Keys", conf->cdt_list.cf_invalidkey);
+		inf("%10" PRIu64 "     Invalid Keys", conf->cdt_list.cf_invalidkey);
 	}
-	inf("%10u   Need Fix", conf->cdt_list.need_fix);
-	inf("%10u     Fixed", conf->cdt_list.fixed);
-	inf("%10u     Fix failed", conf->cdt_list.nf_failed);
-	inf("%10u     Order", conf->cdt_list.nf_order);
-	inf("%10u     Padding", conf->cdt_list.nf_padding);
+	inf("%10" PRIu64 "   Need Fix", conf->cdt_list.need_fix);
+	inf("%10" PRIu64 "     Fixed", conf->cdt_list.fixed);
+	inf("%10" PRIu64 "     Fix failed", conf->cdt_list.nf_failed);
+	inf("%10" PRIu64 "     Order", conf->cdt_list.nf_order);
+	inf("%10" PRIu64 "     Padding", conf->cdt_list.nf_padding);
 
-	inf("%10u Maps", conf->cdt_map.count);
-	inf("%10u   Unfixable", conf->cdt_map.cannot_fix);
-	inf("%10u     Has duplicate keys", conf->cdt_map.cf_dupkey);
-	inf("%10u     Has non-storage", conf->cdt_map.cf_nonstorage);
-	inf("%10u     Corrupted", conf->cdt_map.cf_corrupt);
+	inf("%10" PRIu64 " Maps", conf->cdt_map.count);
+	inf("%10" PRIu64 "   Unfixable", conf->cdt_map.cannot_fix);
+	inf("%10" PRIu64 "     Has duplicate keys", conf->cdt_map.cf_dupkey);
+	inf("%10" PRIu64 "     Has non-storage", conf->cdt_map.cf_nonstorage);
+	inf("%10" PRIu64 "     Corrupted", conf->cdt_map.cf_corrupt);
 	if (conf->check_map_keys) {
-		inf("%10u     Invalid Keys", conf->cdt_map.cf_invalidkey);
+		inf("%10" PRIu64 "     Invalid Keys", conf->cdt_map.cf_invalidkey);
 	}
-	inf("%10u   Need Fix", conf->cdt_map.need_fix);
-	inf("%10u     Fixed", conf->cdt_map.fixed);
-	inf("%10u     Fix failed", conf->cdt_map.nf_failed);
-	inf("%10u     Order", conf->cdt_map.nf_order);
-	inf("%10u     Padding", conf->cdt_map.nf_padding);
+	inf("%10" PRIu64 "   Need Fix", conf->cdt_map.need_fix);
+	inf("%10" PRIu64 "     Fixed", conf->cdt_map.fixed);
+	inf("%10" PRIu64 "     Fix failed", conf->cdt_map.nf_failed);
+	inf("%10" PRIu64 "     Order", conf->cdt_map.nf_order);
+	inf("%10" PRIu64 "     Padding", conf->cdt_map.nf_padding);
 
-	inf("%10u Nested deeper than %u levels", conf->cdt_depth_over +
+	inf("%10" PRIu64 " Nested deeper than %u levels", conf->cdt_depth_over +
 			conf->cdt_depth_over_strict, conf->cdt_max_depth);
-	inf("%10u   Rejected by server 8.2+", conf->cdt_depth_over);
-	inf("%10u   Only via empty lists/maps (rejected by client 7.6+ and UDFs)",
+	inf("%10" PRIu64 "   Rejected by server 8.2+", conf->cdt_depth_over);
+	inf("%10" PRIu64 "   Only via empty lists/maps (rejected by client 7.6+ and UDFs)",
 			conf->cdt_depth_over_strict);
 	if (conf->cdt_fix) {
-		inf("%10u   Fix skipped", conf->cdt_fix_skipped_depth);
+		inf("%10" PRIu64 "   Fix skipped", conf->cdt_fix_skipped_depth);
 	}
 
 	if (conf->cdt_deepest > conf->cdt_max_depth) {
