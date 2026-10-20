@@ -914,7 +914,8 @@ counter_thread_func(void *cont)
 	inf("%10" PRIu64 " Nested deeper than %u levels", conf->cdt_depth_over +
 			conf->cdt_depth_over_strict, conf->cdt_max_depth);
 	inf("%10" PRIu64 "   Rejected by server 8.2+", conf->cdt_depth_over);
-	inf("%10" PRIu64 "   Only via empty lists/maps (rejected by client 7.6+ and UDFs)",
+	inf("%10" PRIu64 "   Only via empty lists/maps "
+			"(rejected by server 8.2.1+, client 7.6+ and UDFs)",
 			conf->cdt_depth_over_strict);
 	if (conf->cdt_fix) {
 		inf("%10" PRIu64 "   Fix skipped", conf->cdt_fix_skipped_depth);
