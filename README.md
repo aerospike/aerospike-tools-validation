@@ -35,7 +35,9 @@ The msgpack deserializer shared by C client 7.6.0 and later, and by server UDFs
 (server 8.2 and the 7.2.0.22, 8.0.0.20 and 8.1.2.5 releases), also refuses values
 nested deeper than 64 levels, even when the deepest lists or maps are empty.
 Reads of such records with the default deserialization fail, and a UDF sees the
-bin as nil; a UDF that writes the bin back deletes it.
+bin as nil; a UDF that writes the bin back deletes it. Server 8.2.0 still accepts
+a record that is too deep only through empty lists or maps; server 8.2.1 and
+later reject it too.
 
 Run asvalidation on every namespace before upgrading servers to 8.2, before an
 XDR source ships to an 8.2 cluster, and before moving applications to C client
@@ -71,8 +73,8 @@ A minimal set of options to run this tool.
 |Invalid Keys|The bin has a map with at least one invalid key.|This type of error is unfixable without your manual intervention.|
 |Order|The bin has elements out of order.|Can be fixed by reordering the list with the --cdt-fix-ordered-list-unique option. See server version requirements in Recommendations and Server Versions for When to Run asvalidation.|
 |Padding|The bin has garbage bytes after the valid list or map.|Can be fixed by truncating the extra bytes. See server version requirements in Recommendations and Server Versions for When to Run asvalidation.|
-|Rejected by server 8.2+|A list or map that has at least one element is nested deeper than 64 levels.|Not fixable by this tool. Reduce the nesting in the application before upgrading. Records with such bins are never changed in fix mode.|
-|Only via empty lists/maps|Only empty lists or maps are nested deeper than 64 levels. Server 8.2 accepts the record, but C client 7.6+ and UDFs cannot read it.|Not fixable by this tool. Reduce the nesting in the application.|
+|Rejected by server 8.2+|A list or map that holds elements or flags is nested deeper than 64 levels. An empty ordered list or map holds its order flags, so it counts here.|Not fixable by this tool. Reduce the nesting in the application before upgrading. Records with such bins are never changed in fix mode.|
+|Only via empty lists/maps|Only empty lists or maps without flags are nested deeper than 64 levels. Server 8.2.0 accepts the record, but server 8.2.1+ rejects it and C client 7.6+ and UDFs cannot read it.|Not fixable by this tool. Reduce the nesting in the application.|
 
 ## asvalidation Modes
 asvalidation can be run in the following modes. Records without CDTs or detected errors are ignored. Records with detected errors are saved unless otherwise specified. By default, no fixes are applied.
@@ -234,7 +236,7 @@ Default configuration files are read from the following files in the given order
 2020-01-06 22:12:28 GMT [INF] [24662]          0     Padding
 2020-01-06 22:12:28 GMT [INF] [24662]          0 Nested deeper than 64 levels
 2020-01-06 22:12:28 GMT [INF] [24662]          0   Rejected by server 8.2+
-2020-01-06 22:12:28 GMT [INF] [24662]          0   Only via empty lists/maps (rejected by client 7.6+ and UDFs)
+2020-01-06 22:12:28 GMT [INF] [24662]          0   Only via empty lists/maps (rejected by server 8.2.1+, client 7.6+ and UDFs)
 2020-01-06 22:12:28 GMT [INF] [24662] Deepest list/map nesting: 3 levels
 ```
 
@@ -300,7 +302,7 @@ To run the unit tests (no server needed):
 
     make test
 
-To run the end-to-end test, which starts Aerospike CE 8.1 and 8.2 containers
+To run the end-to-end test, which starts Aerospike CE 8.1 and 8.2.0 containers
 (needs Docker and python3):
 
     make e2e

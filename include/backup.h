@@ -136,7 +136,7 @@ typedef struct {
 	cdt_stats cdt_list;
 	cdt_stats cdt_map;
 
-	uint64_t cdt_depth_over;            ///< Bins with a non-empty list/map nested too deep.
+	uint64_t cdt_depth_over;            ///< Bins with a list/map holding elements or flags nested too deep.
 	uint64_t cdt_depth_over_strict;     ///< Bins too deep only through empty lists/maps.
 	uint64_t cdt_fix_skipped_depth;     ///< Fixes skipped because the record is too deep.
 	uint32_t cdt_deepest;               ///< Deepest list/map level seen, at most
