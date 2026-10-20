@@ -31,10 +31,11 @@
 
 #define CDT_WALK_MAX_DEPTH 255
 
-// Server 8.2 rejects a non-empty list/map nested deeper than its limit.
+// A list/map nested deeper than the limit that holds elements or flags.
+// Server 8.2 rejects it.
 #define CDT_WALK_OVER 0x01u
-// Only an empty list/map is too deep: the server accepts it, the shared msgpack
-// deserializer (client 7.6+, UDFs) does not.
+// Only an empty list/map without flags is too deep. Server 8.2.0 accepts it;
+// server 8.2.1+ and the msgpack deserializer (client 7.6+, UDFs) do not.
 #define CDT_WALK_EMPTY_OVER 0x02u
 // A map key that is not an integer, string or blob.
 #define CDT_WALK_INVALID_KEY 0x04u
