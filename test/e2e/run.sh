@@ -6,8 +6,10 @@
 # 64-level limit (plus a few 200,000 levels deep), and checks asvalidation's
 # depth counters, deepest level, flagged records, exit code and depth-only mode
 # against the classes computed from the stored bytes. Then restarts the server
-# as CE 8.2 on the same data, checks again, and rewrites every record to confirm
-# that 8.2 rejects exactly the records reported as too deep for it.
+# as CE 8.2.0 on the same data, checks again, and rewrites every record to
+# confirm that 8.2.0 rejects exactly the records reported as rejected by the
+# server. Server 8.2.1+ also rejects the records too deep only through empty
+# lists/maps (SERVER-1776), so the rewrite checks assume 8.2.0.
 #
 # Needs docker, plus bin/asvalidation and bin/test/gen_cdt (make e2e builds both
 # and runs this script).
@@ -152,17 +154,17 @@ for server in 8.1 8.2; do
 	check_small_stack "$server"
 done
 
-echo "8.2 rewrite of the stored bytes:"
+echo "8.2.0 rewrite of the stored bytes:"
 rewrite=$(run bin/test/gen_cdt rewrite -h "$host" -n test)
 echo "$rewrite" | sed 's/^/  /'
 
 over=$(expected | awk '{ print $2 }')
 echo "$rewrite" | grep -qx "over accepted 0 rejected $over" ||
-	fail "8.2 did not reject exactly the $over records reported as too deep"
+	fail "8.2.0 did not reject exactly the $over records reported as rejected by the server"
 echo "$rewrite" | grep -qE "^(ok|strict_only) accepted [0-9]+ rejected 0$" ||
-	fail "8.2 rejected records not reported as too deep"
+	fail "8.2.0 rejected records it should accept"
 [ "$(echo "$rewrite" | grep -cE "^(ok|strict_only) accepted [0-9]+ rejected 0$")" = 2 ] ||
-	fail "8.2 rejected records not reported as too deep"
+	fail "8.2.0 rejected records it should accept"
 echo "$rewrite" | grep -qx "other_errors 0" || fail "unexpected rewrite errors"
 
 if [ "$failures" -ne 0 ]; then
