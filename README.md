@@ -23,7 +23,9 @@ detect &mdash;and if possible correct&mdash; those bins.
 ### Before upgrading to Aerospike Database 8.2
 
 Server 8.2 rejects list and map values nested deeper than 64 levels. Earlier
-servers accepted any depth, so existing data can be deeper. The upgrade itself
+servers accepted any depth, so existing data can be deeper, and some writes on
+8.2 can still store a deeper bin: a UDF write, or on 8.2.0 a list or map
+operation that nests a 64-level value inside another. The upgrade itself
 succeeds and such records can still be read as raw bytes, but afterwards:
 
 * rewriting the record, including a client read-modify-write, fails with
@@ -41,8 +43,9 @@ later reject it too.
 
 Run asvalidation on every namespace before upgrading servers to 8.2, before an
 XDR source ships to an 8.2 cluster, and before moving applications to C client
-7.6 or later or relying on UDFs on the releases above. A depth-only pass is the
-fastest:
+7.6 or later or relying on UDFs on the releases above. Run it again after the
+upgrade, since the writes above can still store bins that are too deep. A
+depth-only pass is the fastest:
 
     asvalidation -n NAMESPACE -o deep.asb --cdt-check-depth-only --fail-on-cdt-depth
 
