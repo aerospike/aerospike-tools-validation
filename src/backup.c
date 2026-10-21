@@ -23,6 +23,7 @@
 
 #include <backup.h>
 #include <cdt_check.h>
+#include <cdt_walk.h>
 #include <conf.h>
 #include <enc_text.h>
 #include <utils.h>
@@ -358,8 +359,11 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 	}
 
 	as_error error;
+	as_record *op_rec = NULL;
 
-	if (aerospike_key_operate(as, &error, NULL, &rec->key, &ops, &rec) !=
+	// Results go to their own record: passing the scanned record would replace
+	// its bins with the operation's results before it is written out.
+	if (aerospike_key_operate(as, &error, NULL, &rec->key, &ops, &op_rec) !=
 			AEROSPIKE_OK) {
 		err("as_testlist_op() returned %d - %s", error.code, error.message);
 		as_operations_destroy(&ops);
@@ -368,16 +372,61 @@ cdt_fix_list(aerospike *as, as_record *rec, as_bin *bin, cdt_fix *cf,
 		return;
 	}
 
+	as_record_destroy(op_rec);
 	as_operations_destroy(&ops);
 	cf_free(pk.buffer);
 	atomic_incr(&stat->fixed);
 }
 
-// Return true to log the record.
+static void
+atomic_max(uint32_t *target, uint32_t value)
+{
+	uint32_t cur = atomic_load(target);
+
+	while (value > cur && ! __atomic_compare_exchange_n(target, &cur, value,
+			false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+	}
+}
+
+// Return true if a list/map bin is nested deeper than the server accepts, so
+// rewriting the record would fail on server 8.2+.
 static bool
-cdt_check(aerospike *as, as_record *rec, backup_config *bc)
+cdt_record_too_deep(const as_record *rec, uint32_t max_depth)
+{
+	for (int32_t i = 0; i < rec->bins.size; ++i) {
+		as_val *val = (as_val *)rec->bins.entries[i].valuep;
+
+		if (val->type != AS_BYTES) {
+			continue;
+		}
+
+		as_bytes *b = (as_bytes *)val;
+		as_bytes_type b_type = as_bytes_get_type(b);
+
+		if (b_type != AS_BYTES_LIST && b_type != AS_BYTES_MAP) {
+			continue;
+		}
+
+		cdt_walk_result wr;
+
+		cdt_walk(as_bytes_get(b), as_bytes_size(b), max_depth, false, &wr);
+
+		if ((wr.flags & CDT_WALK_OVER) != 0) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// Return true to log the record. *deepest is raised to the deepest list/map
+// level seen.
+static bool
+cdt_check(aerospike *as, as_record *rec, backup_config *bc, uint32_t *deepest)
 {
 	bool need_log = false; // log record if any bin is corrupt
+	bool too_deep = bc->cdt_fix &&
+			cdt_record_too_deep(rec, bc->cdt_max_depth);
 
 	for (int32_t i = 0; i < rec->bins.size; ++i) {
 		as_bin *bin = &rec->bins.entries[i];
@@ -396,6 +445,58 @@ cdt_check(aerospike *as, as_record *rec, backup_config *bc)
 
 		uint8_t *buf = as_bytes_get(b);
 		uint32_t buf_sz = as_bytes_size(b);
+		cdt_stats *st;
+
+		switch (msgpack_buf_peek_type(buf, buf_sz)) {
+		case MSGPACK_TYPE_LIST:
+			st = &bc->cdt_list;
+			break;
+		case MSGPACK_TYPE_MAP:
+			st = &bc->cdt_map;
+			break;
+		default:
+			continue;
+		}
+
+		atomic_incr(&st->count);
+
+		cdt_walk_result wr;
+
+		cdt_walk(buf, buf_sz, bc->cdt_max_depth, bc->check_map_keys, &wr);
+
+		uint32_t walk_flags = wr.flags;
+
+		if (wr.depth > *deepest) {
+			*deepest = wr.depth;
+		}
+
+		if ((walk_flags & CDT_WALK_OVER) != 0) {
+			atomic_incr(&bc->cdt_depth_over);
+			need_log = true;
+		}
+		else if ((walk_flags & CDT_WALK_EMPTY_OVER) != 0) {
+			atomic_incr(&bc->cdt_depth_over_strict);
+			need_log = true;
+		}
+
+		if ((walk_flags & CDT_WALK_INVALID_KEY) != 0) {
+			atomic_incr(&st->cf_invalidkey);
+			need_log = true;
+		}
+
+		if ((walk_flags & CDT_WALK_CORRUPT) != 0) {
+			need_log = true;
+
+			if (bc->cdt_depth_only) {
+				atomic_incr(&st->cannot_fix);
+				atomic_incr(&st->cf_corrupt);
+			}
+		}
+
+		if (bc->cdt_depth_only) {
+			continue;
+		}
+
 		cdt_fix cf = { NULL };
 		bool need_fix = cdt_need_fix(buf, buf_sz, &cf, bc);
 
@@ -409,7 +510,14 @@ cdt_check(aerospike *as, as_record *rec, backup_config *bc)
 
 		need_log = true;
 
-		if (! bc->cdt_fix) {
+		// A rewrite would carry the invalid key or the damage along.
+		if (! bc->cdt_fix ||
+				(walk_flags & (CDT_WALK_INVALID_KEY | CDT_WALK_CORRUPT)) != 0) {
+			continue;
+		}
+
+		if (too_deep) {
+			atomic_incr(&bc->cdt_fix_skipped_depth);
 			continue;
 		}
 
@@ -465,7 +573,7 @@ scan_callback(const as_val *val, void *cont)
 
 	atomic_incr(&pnc->conf->rec_count_checked);
 
-	if (! cdt_check(pnc->conf->as, rec, pnc->conf)) {
+	if (! cdt_check(pnc->conf->as, rec, pnc->conf, &pnc->cdt_deepest)) {
 		return true;
 	}
 
@@ -587,6 +695,7 @@ backup_thread_func(void *cont)
 		pnc.rec_count_file = pnc.byte_count_file = 0;
 		pnc.file_count = 0;
 		pnc.rec_count_node = pnc.byte_count_node = 0;
+		pnc.cdt_deepest = 0;
 
 		inf("Starting validation for node %s", pnc.node_name);
 
@@ -616,6 +725,8 @@ backup_thread_func(void *cont)
 			status = aerospike_scan_node(pnc.conf->as, &ae, pnc.conf->policy,
 					pnc.conf->scan, pnc.node_name, scan_callback, &pnc);
 		}
+
+		atomic_max(&pnc.conf->cdt_deepest, pnc.cdt_deepest);
 
 		if (status != AEROSPIKE_OK) {
 			if (ae.code == AEROSPIKE_OK) {
@@ -761,36 +872,61 @@ counter_thread_func(void *cont)
 		err_code("Error while writing machine-readable summary");
 	}
 
+	if (args->mach_fd != NULL && (fprintf(args->mach_fd,
+			"CDT_DEPTH:%u:%u:%" PRIu64 ":%" PRIu64 "\n", conf->cdt_max_depth,
+			conf->cdt_deepest,
+			conf->cdt_depth_over, conf->cdt_depth_over_strict) < 0 ||
+			fflush(args->mach_fd) == EOF)) {
+		err_code("Error while writing machine-readable depth summary");
+	}
+
 	inf("CDT Mode: %s", conf->cdt_fix ? "fix" : "validate");
 	if (conf->check_map_keys) {
 		inf("check-map-keys = True");
 	}
-	inf("%10u Lists", conf->cdt_list.count);
-	inf("%10u   Unfixable", conf->cdt_list.cannot_fix);
-	inf("%10u     Has non-storage", conf->cdt_list.cf_nonstorage);
-	inf("%10u     Corrupted", conf->cdt_list.cf_corrupt);
+	inf("%10" PRIu64 " Lists", conf->cdt_list.count);
+	inf("%10" PRIu64 "   Unfixable", conf->cdt_list.cannot_fix);
+	inf("%10" PRIu64 "     Has non-storage", conf->cdt_list.cf_nonstorage);
+	inf("%10" PRIu64 "     Corrupted", conf->cdt_list.cf_corrupt);
 	if (conf->check_map_keys) {
-		inf("%10u     Invalid Keys", conf->cdt_list.cf_invalidkey);
+		inf("%10" PRIu64 "     Invalid Keys", conf->cdt_list.cf_invalidkey);
 	}
-	inf("%10u   Need Fix", conf->cdt_list.need_fix);
-	inf("%10u     Fixed", conf->cdt_list.fixed);
-	inf("%10u     Fix failed", conf->cdt_list.nf_failed);
-	inf("%10u     Order", conf->cdt_list.nf_order);
-	inf("%10u     Padding", conf->cdt_list.nf_padding);
+	inf("%10" PRIu64 "   Need Fix", conf->cdt_list.need_fix);
+	inf("%10" PRIu64 "     Fixed", conf->cdt_list.fixed);
+	inf("%10" PRIu64 "     Fix failed", conf->cdt_list.nf_failed);
+	inf("%10" PRIu64 "     Order", conf->cdt_list.nf_order);
+	inf("%10" PRIu64 "     Padding", conf->cdt_list.nf_padding);
 
-	inf("%10u Maps", conf->cdt_map.count);
-	inf("%10u   Unfixable", conf->cdt_map.cannot_fix);
-	inf("%10u     Has duplicate keys", conf->cdt_map.cf_dupkey);
-	inf("%10u     Has non-storage", conf->cdt_map.cf_nonstorage);
-	inf("%10u     Corrupted", conf->cdt_map.cf_corrupt);
+	inf("%10" PRIu64 " Maps", conf->cdt_map.count);
+	inf("%10" PRIu64 "   Unfixable", conf->cdt_map.cannot_fix);
+	inf("%10" PRIu64 "     Has duplicate keys", conf->cdt_map.cf_dupkey);
+	inf("%10" PRIu64 "     Has non-storage", conf->cdt_map.cf_nonstorage);
+	inf("%10" PRIu64 "     Corrupted", conf->cdt_map.cf_corrupt);
 	if (conf->check_map_keys) {
-		inf("%10u     Invalid Keys", conf->cdt_map.cf_invalidkey);
+		inf("%10" PRIu64 "     Invalid Keys", conf->cdt_map.cf_invalidkey);
 	}
-	inf("%10u   Need Fix", conf->cdt_map.need_fix);
-	inf("%10u     Fixed", conf->cdt_map.fixed);
-	inf("%10u     Fix failed", conf->cdt_map.nf_failed);
-	inf("%10u     Order", conf->cdt_map.nf_order);
-	inf("%10u     Padding", conf->cdt_map.nf_padding);
+	inf("%10" PRIu64 "   Need Fix", conf->cdt_map.need_fix);
+	inf("%10" PRIu64 "     Fixed", conf->cdt_map.fixed);
+	inf("%10" PRIu64 "     Fix failed", conf->cdt_map.nf_failed);
+	inf("%10" PRIu64 "     Order", conf->cdt_map.nf_order);
+	inf("%10" PRIu64 "     Padding", conf->cdt_map.nf_padding);
+
+	inf("%10" PRIu64 " Nested deeper than %u levels", conf->cdt_depth_over +
+			conf->cdt_depth_over_strict, conf->cdt_max_depth);
+	inf("%10" PRIu64 "   Rejected by server 8.2+", conf->cdt_depth_over);
+	inf("%10" PRIu64 "   Only via empty lists/maps "
+			"(rejected by server 8.2.1+, client 7.6+ and UDFs)",
+			conf->cdt_depth_over_strict);
+	if (conf->cdt_fix) {
+		inf("%10" PRIu64 "   Fix skipped", conf->cdt_fix_skipped_depth);
+	}
+
+	if (conf->cdt_deepest > conf->cdt_max_depth) {
+		inf("Deepest list/map nesting: more than %u levels", conf->cdt_max_depth);
+	}
+	else {
+		inf("Deepest list/map nesting: %u levels", conf->cdt_deepest);
+	}
 
 	if (verbose) {
 		ver("Leaving counter thread");
@@ -1556,6 +1692,15 @@ usage(const char *name)
 	fprintf(stderr, " --cdt-fix-ordered-list-unique\n");
 	fprintf(stderr, " --no-cdt-check-map-keys\n");
 	fprintf(stderr, "                      Fix CDT ordered list records.\n");
+	fprintf(stderr, " --cdt-check-depth-only\n");
+	fprintf(stderr, "                      Only check list/map nesting depth and map keys,\n");
+	fprintf(stderr, "                      skipping the order, duplicate key and padding\n");
+	fprintf(stderr, "                      checks. Cannot be used with\n");
+	fprintf(stderr, "                      --cdt-fix-ordered-list-unique.\n");
+	fprintf(stderr, " --fail-on-cdt-depth\n");
+	fprintf(stderr, "                      Exit with code %d if any list/map is nested\n",
+			EXIT_CDT_DEPTH);
+	fprintf(stderr, "                      deeper than the limit.\n");
 
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Configuration File Allowed Options\n");
@@ -1724,6 +1869,8 @@ main(int32_t argc, char **argv)
 
 		{ "cdt-fix-ordered-list-unique", no_argument, NULL, CDT_FIX_OPT },
 		{ "no-cdt-check-map-keys", no_argument, NULL, CDT_MAP_KEYS },
+		{ "cdt-check-depth-only", no_argument, NULL, CDT_DEPTH_ONLY },
+		{ "fail-on-cdt-depth", no_argument, NULL, CDT_FAIL_ON_DEPTH },
 
 		// Config options
 		{ "host", required_argument, 0, 'h'},
@@ -2070,6 +2217,14 @@ main(int32_t argc, char **argv)
 			conf.check_map_keys = false;
 			break;
 
+		case CDT_DEPTH_ONLY:
+			conf.cdt_depth_only = true;
+			break;
+
+		case CDT_FAIL_ON_DEPTH:
+			conf.fail_on_cdt_depth = true;
+			break;
+
 		default:
 			usage(argv[0]);
 			goto cleanup1;
@@ -2110,6 +2265,12 @@ main(int32_t argc, char **argv)
 
 	if (out_count == 0) {
 		err("Please specify a directory (-d), an output file (-o).");
+		goto cleanup1;
+	}
+
+	if (conf.cdt_depth_only && conf.cdt_fix) {
+		err("Invalid options: --cdt-check-depth-only is mutually exclusive with "
+				"--cdt-fix-ordered-list-unique.");
 		goto cleanup1;
 	}
 
@@ -2401,6 +2562,14 @@ cleanup9:
 		}
 	}
 
+	if (res == EXIT_SUCCESS && conf.fail_on_cdt_depth &&
+			atomic_load(&conf.cdt_depth_over) +
+					atomic_load(&conf.cdt_depth_over_strict) != 0) {
+		inf("Found lists/maps nested deeper than %u levels, exiting with code %d",
+				conf.cdt_max_depth, EXIT_CDT_DEPTH);
+		res = EXIT_CDT_DEPTH;
+	}
+
 cleanup8:
 	if (conf.output_file != NULL && !close_file(&backup_args.shared_fd,
 			&fd_buf)) {
@@ -2516,6 +2685,9 @@ config_default(backup_config *conf)
 	conf->file_limit = DEFAULT_FILE_LIMIT * 1024 * 1024;
 
 	conf->check_map_keys = true;
+	conf->cdt_depth_only = false;
+	conf->fail_on_cdt_depth = false;
+	conf->cdt_max_depth = DEFAULT_CDT_MAX_DEPTH;
 
 	memset(&conf->tls, 0, sizeof(as_config_tls));
 }

@@ -157,6 +157,8 @@ typedef enum {
 #define CDT_FIX_OPT 3000
 #define CDT_PRINT 3001
 #define CDT_MAP_KEYS 3002
+#define CDT_DEPTH_ONLY 3003
+#define CDT_FAIL_ON_DEPTH 3005
 
 typedef struct {
 	void *conf;                                 ///< The global configuration and stats.

@@ -38,10 +38,16 @@
 
 #define MAX_PARTITIONS 4096
 
-#define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_SEQ_CST)
-#define atomic_add(_target, _value) __atomic_add_fetch(_target, _value, __ATOMIC_SEQ_CST)
-#define atomic_load(_target) __atomic_load_n(_target, __ATOMIC_SEQ_CST)
-#define atomic_store(_target, _value) __atomic_store_n(_target, _value, __ATOMIC_SEQ_CST)
+#define DEFAULT_CDT_MAX_DEPTH 64                    ///< Server 8.2 rejects lists/maps nested
+                                                    ///  deeper than this.
+#define EXIT_CDT_DEPTH 3                            ///< Exit code for --fail-on-cdt-depth.
+
+// Only used for counters: nothing else is ordered by them, and final values
+// are read after the worker threads are joined.
+#define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_RELAXED)
+#define atomic_add(_target, _value) __atomic_add_fetch(_target, _value, __ATOMIC_RELAXED)
+#define atomic_load(_target) __atomic_load_n(_target, __ATOMIC_RELAXED)
+#define atomic_store(_target, _value) __atomic_store_n(_target, _value, __ATOMIC_RELAXED)
 
 ///
 /// The interface exposed by the backup file format encoder.
@@ -61,19 +67,19 @@ typedef struct {
 } backup_encoder;
 
 typedef struct cdt_stats_s {
-	uint32_t count;
-	uint32_t fixed;
+	uint64_t count;
+	uint64_t fixed;
 
-	uint32_t need_fix;
-	uint32_t nf_failed;
-	uint32_t nf_order;
-	uint32_t nf_padding;
+	uint64_t need_fix;
+	uint64_t nf_failed;
+	uint64_t nf_order;
+	uint64_t nf_padding;
 
-	uint32_t cannot_fix;
-	uint32_t cf_dupkey; // map top level only
-	uint32_t cf_nonstorage;
-	uint32_t cf_corrupt;
-	uint32_t cf_invalidkey; // includes sub levels
+	uint64_t cannot_fix;
+	uint64_t cf_dupkey; // map top level only
+	uint64_t cf_nonstorage;
+	uint64_t cf_corrupt;
+	uint64_t cf_invalidkey; // includes sub levels
 } cdt_stats;
 
 ///
@@ -123,9 +129,18 @@ typedef struct {
 
 	bool cdt_fix;
 	bool check_map_keys;
+	bool cdt_depth_only;                ///< Only run the depth and map-key walk.
+	bool fail_on_cdt_depth;             ///< Exit with EXIT_CDT_DEPTH if a bin is too deep.
+	uint32_t cdt_max_depth;             ///< Deepest list/map nesting level allowed.
 
 	cdt_stats cdt_list;
 	cdt_stats cdt_map;
+
+	uint64_t cdt_depth_over;            ///< Bins with a list/map holding elements or flags nested too deep.
+	uint64_t cdt_depth_over_strict;     ///< Bins too deep only through empty lists/maps.
+	uint64_t cdt_fix_skipped_depth;     ///< Fixes skipped because the record is too deep.
+	uint32_t cdt_deepest;               ///< Deepest list/map level seen, at most
+	                                    ///  cdt_max_depth + 1.
 } backup_config;
 
 ///
@@ -171,4 +186,5 @@ typedef struct {
 	                                    ///  processed cluster node.
 	uint64_t byte_count_node;           ///< Counts the number of bytes written to all backup files
 	                                    ///  for the currently processed cluster node.
+	uint32_t cdt_deepest;               ///< Deepest list/map level seen in this node's scan.
 } per_node_context;
