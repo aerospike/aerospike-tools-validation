@@ -38,6 +38,11 @@
 
 #define MAX_PARTITIONS 4096
 
+#define atomic_incr(_target) __atomic_add_fetch(_target, 1, __ATOMIC_SEQ_CST)
+#define atomic_add(_target, _value) __atomic_add_fetch(_target, _value, __ATOMIC_SEQ_CST)
+#define atomic_load(_target) __atomic_load_n(_target, __ATOMIC_SEQ_CST)
+#define atomic_store(_target, _value) __atomic_store_n(_target, _value, __ATOMIC_SEQ_CST)
+
 ///
 /// The interface exposed by the backup file format encoder.
 ///
