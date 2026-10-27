@@ -30,13 +30,19 @@ OS := $(shell uname -s)
 ARCH := $(shell uname -m)
 PLATFORM := $(OS)-$(ARCH)
 
+VERSION := $(shell build/version -v)
+ifeq ($(VERSION),)
+$(error build/version could not read the VERSION file)
+endif
+
 CC := cc
 
 DWARF := $(shell $(CC) -Wall -Wextra -O2 -o /tmp/asflags_$${$$} src/flags.c; \
 		/tmp/asflags_$${$$}; rm /tmp/asflags_$${$$})
 CFLAGS := -std=gnu99 $(DWARF) -O2 -fno-common -fno-strict-aliasing \
 		-Wall -Wextra -Wconversion -Wsign-conversion -Wmissing-declarations \
-		-D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_FORTIFY_SOURCE=2 -DMARCH_$(ARCH)
+		-D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_FORTIFY_SOURCE=2 -DMARCH_$(ARCH) \
+		-DTOOL_VERSION=\"$(VERSION)\"
 
 ifeq ($(OS), Linux)
   CFLAGS += -pthread -fstack-protector -Wa,--noexecstack
@@ -64,6 +70,8 @@ DIR_BIN := bin
 DIR_DOCS := docs
 DIR_ENV := env
 DIR_TOML := src/toml
+
+VERSION_STAMP := $(DIR_OBJ)/version.stamp
 
 INCLUDES := -I$(DIR_INC)
 INCLUDES += -I$(DIR_TOML)
@@ -95,7 +103,7 @@ src_to_obj = $(1:$(DIR_SRC)/%.c=$(DIR_OBJ)/%.o)
 obj_to_dep = $(1:%.o=%.d)
 src_to_lib =
 
-BACKUP_INC := $(DIR_INC)/backup.h $(DIR_INC)/cdt_check.h $(DIR_INC)/cdt_walk.h $(DIR_INC)/enc_text.h $(DIR_INC)/shared.h $(DIR_INC)/utils.h $(DIR_INC)/msgpack_in.h $(DIR_INC)/version.h
+BACKUP_INC := $(DIR_INC)/backup.h $(DIR_INC)/cdt_check.h $(DIR_INC)/cdt_walk.h $(DIR_INC)/enc_text.h $(DIR_INC)/shared.h $(DIR_INC)/utils.h $(DIR_INC)/msgpack_in.h
 BACKUP_SRC := $(DIR_SRC)/backup.c $(DIR_SRC)/cdt_check.c $(DIR_SRC)/cdt_walk.c $(DIR_SRC)/conf.c $(DIR_SRC)/utils.c $(DIR_SRC)/enc_text.c $(DIR_SRC)/msgpack_in.c
 BACKUP_OBJ := $(call src_to_obj, $(BACKUP_SRC))
 BACKUP_DEP := $(call obj_to_dep, $(BACKUP_OBJ))
@@ -145,7 +153,7 @@ all: $(BINS)
 
 clean:
 	$(MAKE) -C $(DIR_TOML) clean
-	rm -f $(DEPS) $(OBJS) $(BINS)
+	rm -f $(DEPS) $(OBJS) $(BINS) $(VERSION_STAMP)
 	rm -rf $(DIR_TEST_BIN)
 	if [ -d $(DIR_OBJ) ]; then rmdir $(DIR_OBJ); fi
 	if [ -d $(DIR_BIN) ]; then rmdir $(DIR_BIN); fi
@@ -176,8 +184,14 @@ $(DIR_BIN):
 $(DIR_OBJ)/%.o: $(DIR_SRC)/%.c | $(DIR_OBJ)
 	$(CC) $(CFLAGS) -MMD -o $@ -c $(INCLUDES) $<
 
+.PHONY: FORCE
+$(VERSION_STAMP): FORCE | $(DIR_OBJ)
+	@echo '$(VERSION)' | cmp -s - $@ || echo '$(VERSION)' > $@
+
+$(DIR_OBJ)/backup.o: $(VERSION_STAMP)
+
 test: $(TESTS)
-	@for t in $(TESTS); do $$t || exit 1; done
+	@for t in $(TESTS) $(DIR_TEST)/test_version.sh; do $$t || exit 1; done
 
 $(DIR_TEST_BIN):
 	mkdir -p $(DIR_TEST_BIN)

@@ -106,3 +106,7 @@ jobs:
       - name: Run e2e
         run: make e2e CLIENTREPO="$GITHUB_WORKSPACE/client"
         working-directory: main
+
+      - name: Check the binary reports VERSION
+        run: bin/asvalidation --version | grep -xF "Version $(build/version -v)"
+        working-directory: main

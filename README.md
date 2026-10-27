@@ -310,6 +310,15 @@ To run the end-to-end test, which starts Aerospike CE 8.1 and 8.2.0 containers
 
     make e2e
 
+### Version
+
+The `VERSION` file at the top of the repository holds the release version.
+`make` stamps it into the binary (`asvalidation --version`), and `make rpm` /
+`make deb` name the packages from it, both through `build/version`. To release,
+change `VERSION` on master. Builds from other branches report
+`<version>-<n>-g<sha>`. On master, the package build number counts the commits
+since `VERSION` last changed, starting at 1.
+
 ## Validation File Format
 
 Currently, there is only a single, text-based validation file format, which provides compatibility with previous versions of Aerospike. However, validation file formats are pluggable and a binary format could be supported in the future.
