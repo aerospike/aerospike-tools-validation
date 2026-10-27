@@ -41,8 +41,7 @@ DWARF := $(shell $(CC) -Wall -Wextra -O2 -o /tmp/asflags_$${$$} src/flags.c; \
 		/tmp/asflags_$${$$}; rm /tmp/asflags_$${$$})
 CFLAGS := -std=gnu99 $(DWARF) -O2 -fno-common -fno-strict-aliasing \
 		-Wall -Wextra -Wconversion -Wsign-conversion -Wmissing-declarations \
-		-D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_FORTIFY_SOURCE=2 -DMARCH_$(ARCH) \
-		-DTOOL_VERSION=\"$(VERSION)\"
+		-D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_FORTIFY_SOURCE=2 -DMARCH_$(ARCH)
 
 ifeq ($(OS), Linux)
   CFLAGS += -pthread -fstack-protector -Wa,--noexecstack
@@ -72,6 +71,11 @@ DIR_ENV := env
 DIR_TOML := src/toml
 
 VERSION_STAMP := $(DIR_OBJ)/version.stamp
+
+# Checked while parsing, not by mtime, which make 3.81 compares in whole seconds.
+ifneq ($(shell cat $(VERSION_STAMP) 2>/dev/null),$(VERSION))
+$(shell mkdir -p $(DIR_OBJ); rm -f $(DIR_OBJ)/backup.o $(DIR_OBJ)/backup.d; echo '$(VERSION)' > $(VERSION_STAMP))
+endif
 
 INCLUDES := -I$(DIR_INC)
 INCLUDES += -I$(DIR_TOML)
@@ -184,14 +188,10 @@ $(DIR_BIN):
 $(DIR_OBJ)/%.o: $(DIR_SRC)/%.c | $(DIR_OBJ)
 	$(CC) $(CFLAGS) -MMD -o $@ -c $(INCLUDES) $<
 
-.PHONY: FORCE
-$(VERSION_STAMP): FORCE | $(DIR_OBJ)
-	@echo '$(VERSION)' | cmp -s - $@ || echo '$(VERSION)' > $@
-
-$(DIR_OBJ)/backup.o: $(VERSION_STAMP)
+$(DIR_OBJ)/backup.o: CFLAGS += -DTOOL_VERSION=\"$(VERSION)\"
 
 test: $(TESTS)
-	@for t in $(TESTS) $(DIR_TEST)/test_version.sh; do $$t || exit 1; done
+	@for t in $(TESTS) $(DIR_TEST)/test_version.sh $(DIR_TEST)/test_makefile.sh; do $$t || exit 1; done
 
 $(DIR_TEST_BIN):
 	mkdir -p $(DIR_TEST_BIN)

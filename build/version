@@ -10,7 +10,10 @@
 #   build/version -r           -> master: n + 1 (so the VERSION bump is build 1); dev branches: 1
 #
 # n counts first-parent commits since the commit that last changed VERSION.
-# Outside a git checkout, -v prints VERSION and -r prints 1.
+# When n cannot be counted (shallow clone, VERSION never committed), master -r
+# and default fail; dev branches warn and use 0.
+# With no .git at the repo root (a source tarball), -v prints VERSION and -r
+# prints 1.
 #
 # Consumed by the top-level Makefile (the binary's version), pkg/Makefile.rpm
 # and pkg/Makefile.deb (package version and RPM Release / DEB revision).
@@ -42,7 +45,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-cd "$(dirname "$0")/.." || exit 1
+CDPATH='' cd -- "$(dirname "$0")/.." || exit 1
 
 _read_version() {
     local version
@@ -52,9 +55,10 @@ _read_version() {
         return 1
     fi
 
-    version="$(tr -d '[:space:]' < VERSION)"
-    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-        echo "error: VERSION holds '$version', expected x.y.z or x.y.z-<suffix>" >&2
+    version="$(cat VERSION)"
+    if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ||
+        "$(cat VERSION; echo .)" != "$version"$'\n.' ]]; then
+        echo "error: VERSION must be one line holding x.y.z, got '$version'" >&2
         return 1
     fi
     echo "$version"
@@ -96,20 +100,23 @@ _resolve_branch() {
 }
 
 _commits_since_bump() {
-    local bump
+    local level=$1 bump
 
-    bump="$(git log --first-parent -1 --format=%H -- VERSION 2>/dev/null)" || bump=""
+    if [[ "$(git rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
+        echo "$level: shallow clone, so the commits since VERSION changed cannot be counted; fetch the full history" >&2
+        return 1
+    fi
+    bump="$(git rev-list --first-parent -1 HEAD -- VERSION 2>/dev/null)" || bump=""
     if [[ -z "$bump" ]]; then
-        echo "warning: no commit in this history changes VERSION; counting builds from 0" >&2
-        echo 0
-        return
+        echo "$level: no commit in this history changes VERSION" >&2
+        return 1
     fi
     git rev-list --first-parent --count "${bump}..HEAD"
 }
 
 version="$(_read_version)" || exit 1
 
-if ! git rev-parse --git-dir >/dev/null 2>&1; then
+if [[ ! -e .git ]]; then
     if [[ "$mode" == "build_only" ]]; then
         echo 1
     else
@@ -117,12 +124,13 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
     fi
     exit 0
 fi
+git rev-parse --git-dir >/dev/null || exit 1
 
 if ! _is_release_branch "$(_resolve_branch)"; then
     if [[ "$mode" == "build_only" ]]; then
         echo 1
     else
-        n="$(_commits_since_bump)" || exit 1
+        n="$(_commits_since_bump warning)" || n=0
         sha="$(git rev-parse --short=9 HEAD)" || exit 1
         echo "${version}-${n}-g${sha}"
     fi
@@ -134,7 +142,7 @@ if [[ "$mode" == "version_only" ]]; then
     exit 0
 fi
 
-n="$(_commits_since_bump)" || exit 1
+n="$(_commits_since_bump error)" || exit 1
 if [[ "$mode" == "build_only" ]]; then
     echo "$((n + 1))"
 elif [[ "$n" == "0" ]]; then

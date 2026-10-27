@@ -9,10 +9,13 @@ export ETC_BASE = $(DEB_BUILD_ROOT)/etc/aerospike
 # master -> x.y.z; dev branches -> x.y.z-<n>-g<sha>.
 # print-REV from this Makefile is hyphenated; pkg/Makefile.rpm print-REV is
 # underscored (rpm Version forbids '-').
-REV = $(shell build/version -v)
+REV := $(shell build/version -v)
 # Build number from build/version -r (1-based: the VERSION bump and dev builds are 1).
 # It goes in the debian revision (with the OS); no +1 in this Makefile.
-BUILD_NUMBER = $(shell build/version -r)
+BUILD_NUMBER := $(shell build/version -r)
+ifeq ($(and $(REV),$(BUILD_NUMBER)),)
+$(error build/version failed, see its message above)
+endif
 DEB_REVISION = $(BUILD_NUMBER)$(OS)
 OS = $(shell build/os_version)
 ARCH=$(shell uname -m)
