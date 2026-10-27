@@ -92,5 +92,5 @@ jobs:
             --base master \
             --head "version-bump/$VERSION" \
             --title "chore(release): bump version to $VERSION" \
-            --body "Bumps VERSION to **$VERSION**. After merging, tag the commit that changed VERSION on master \`$VERSION\` and build the release from it." \
+            --body "Bumps VERSION to **$VERSION**. After merging, tag the commit that changed VERSION on master as \`$VERSION\` and build the release from it." \
             --repo "${{ github.repository }}"
