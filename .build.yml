@@ -5,6 +5,8 @@ dependency:
     dir: client
     ref: 7.3.0
 
+priority: true
+
 container:
   - base:
       - docker.qe.aerospike.com/build/aerospike-tools:arm-rhel-8
