@@ -91,7 +91,10 @@ else
   OPENSSL_LIBRARIES := $(OPENSSL_STATIC_PATH)/libssl.a $(OPENSSL_STATIC_PATH)/libcrypto.a
 endif
 LIBRARIES += $(OPENSSL_LIBRARIES)
-LIBRARIES += -lyaml
+LIBYAML_STATIC := $(firstword $(wildcard /usr/lib64/libyaml.a /usr/lib/$(ARCH)-linux-gnu/libyaml.a \
+		/usr/lib/libyaml.a /opt/homebrew/lib/libyaml.a /usr/local/lib/libyaml.a))
+YAML_LIBRARIES := $(or $(LIBYAML_STATIC),-lyaml)
+LIBRARIES += $(YAML_LIBRARIES)
 LIBRARIES += -lpthread
 LIBRARIES += -lm
 LIBRARIES += -lz
@@ -140,7 +143,7 @@ TEST_INCLUDES := -I$(DIR_INC) -I$(DIR_TOML) \
 		-isystem $(CLIENTREPO)/modules/common/src/include
 
 TEST_LIBRARIES := $(CLIENTREPO)/target/$(PLATFORM)/lib/libaerospike.a \
-		-L/usr/local/lib $(OPENSSL_LIBRARIES) -lyaml -lpthread -lm -lz
+		-L/usr/local/lib $(OPENSSL_LIBRARIES) $(YAML_LIBRARIES) -lpthread -lm -lz
 ifeq ($(OS), Linux)
   TEST_LIBRARIES += -ldl -lrt
 endif
