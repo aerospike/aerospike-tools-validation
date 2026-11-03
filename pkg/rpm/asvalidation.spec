@@ -1,9 +1,10 @@
-Name: asvalidation
+Name: aerospike-asvalidation
 Version: @VERSION@
 Release: @RELEASE@%{?dist}
 Summary: Aerospike Validation Tool
 License: Apache-2.0
 URL: https://github.com/aerospike/aerospike-tools-validation
+Obsoletes: asvalidation
 
 # Package the binary as the top-level Makefile built it, as the old spec did:
 # no strip, no debuginfo package.

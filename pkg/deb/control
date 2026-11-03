@@ -1,9 +1,11 @@
-Package: asvalidation
+Package: aerospike-asvalidation
 Version: @VERSION@
 Section: database
 Priority: optional
 Architecture: @ARCH@
 Depends: libc6 (>= 2.7)
+Conflicts: asvalidation
+Replaces: asvalidation
 Maintainer: Aerospike, Inc. <info@aerospike.net>
 Homepage: https://github.com/aerospike/aerospike-tools-validation
 Description: Aerospike Validation Tool

@@ -318,8 +318,12 @@ the binary, and `make rpm` / `make deb` name the packages from it, both through
 `build/version`. Builds from other branches report `<version>-<n>-g<sha>`.
 
 Packages never carry `rcN` in their version; it becomes the package iteration,
-so `2.3.0-rc2` builds `asvalidation_2.3.0-2ubuntu24.04_amd64.deb` and
-`asvalidation-2.3.0-2.el9.x86_64.rpm`.
+so `2.3.0-rc2` builds `aerospike-asvalidation_2.3.0-2ubuntu24.04_amd64.deb` and
+`aerospike-asvalidation-2.3.0-2.el9.x86_64.rpm`. From 2.3.0 the packages are
+named `aerospike-asvalidation` and replace the older `asvalidation` package:
+`dnf upgrade` swaps it automatically, and with apt run
+`apt install aerospike-asvalidation` once (`apt upgrade` alone keeps the old
+package).
 
 ## Validation File Format
 

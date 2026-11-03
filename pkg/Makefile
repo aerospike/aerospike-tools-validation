@@ -13,7 +13,10 @@ STAGE_DIR = $(BUILD_DIR)/root
 TARGET_DIR = $(PKG_DIR)/../target/packages
 # Package variables
 BUILD_DISTRO ?= $(shell $(PKG_DIR)/../.github/bin/os_version.sh)
-NAME = asvalidation
+# Packages up to 2.2.1 were named asvalidation. deb/control and
+# rpm/asvalidation.spec replace that package, so apt and dnf swap it out
+# instead of installing both.
+NAME = aerospike-asvalidation
 # Same source as the binary's version (top-level Makefile). CI passes
 # VERSION=<BUILD_VERSION> on the command line to both.
 VERSION := $(shell $(PKG_DIR)/../build/version -v)
@@ -47,7 +50,7 @@ PKG_ID = com.aerospike.asvalidation
 # macOS artifact file name, lower case and '-' separated so a Homebrew cask can
 # interpolate it (<arch> is `uname -m`, the token a cask's `arch` stanza emits):
 #
-#     asvalidation-<version>-<iteration>-macos-<arch>.pkg
+#     aerospike-asvalidation-<version>-<iteration>-macos-<arch>.pkg
 #
 # One pkg per architecture, not per macOS generation: macOS is forward
 # compatible, so the oldest-runner build serves every supported release.
@@ -79,7 +82,7 @@ rpm: prep
 
 # PKG_VERSION, ITERATION and BUILD_DISTRO all come from $(shell ...), which
 # yields the empty string on failure without failing the build; unguarded, an
-# empty one ships asvalidation_-<distro>_<arch>.deb past every later check.
+# empty one ships aerospike-asvalidation_-<distro>_<arch>.deb past every later check.
 .PHONY: check-version
 check-version:
 	@test -n '$(VERSION)' \
