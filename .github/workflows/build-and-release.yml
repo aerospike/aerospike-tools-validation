@@ -1,0 +1,1283 @@
+# Build and Release pipeline for asvalidation (aerospike-tools-validation).
+# Same shape as the aql pipeline; keep the two in step.
+#
+# Source of truth for the version: the VERSION file at repo root. It carries
+# the release candidate too (e.g. 2.3.0-rc1), written by the Bump Version
+# workflow. Each respin bumps it to the next -rcN.
+#
+# get-version emits two strings:
+#   VERSION        release identity: git tag, JFrog release bundle, build
+#                  number. Off master it also carries the branch and sha.
+#   BUILD_VERSION  what artifacts are named from and what the binary is
+#                  stamped with. pkg_release.sh splits it into the package
+#                  version and iteration, so rcN lands in the deb revision /
+#                  rpm Release and never in a file name or image tag.
+#
+# === Main release flow ===
+#   1. Run Bump Version (manual) -> opens PR updating VERSION (e.g. 2.3.0-rc1).
+#   2. Review + merge the PR to master.
+#   3. Dispatch this workflow on master with `release=true`:
+#      - Builds + signs + tests + publishes packages to JFrog dev repos.
+#      - Creates JFrog release bundle (the promotion unit for any publish).
+#      - Creates and pushes git tag <VERSION> (e.g. 2.3.0-rc1), last.
+#   At GA the passing rc is promoted with no rebuild: its 2.3.0-N artifacts
+#   are what ship. Pushing the bare GA tag by hand drafts the GitHub release
+#   (draft-release.yml); a tag pushed by this workflow's GITHUB_TOKEN does not
+#   trigger other workflows.
+#
+# === Feature-branch publishing (for external customers without GHA access) ===
+#   Dispatch this workflow on any branch with `release=true`:
+#      - No git tag is created (tags are master-only).
+#      - VERSION is a SemVer 2.0 pre-release identifier, so it sorts correctly
+#        in apt/dnf and never collides with master:
+#            2.3.0-rc1 + branch feature/foo, sha abc123456
+#          -> VERSION       2.3.0-rc1-feature-foo-abc123456
+#          -> BUILD_VERSION 2.3.0-abc123456   (sha pins it; iteration stays 1)
+#      - Packages are uploaded to the JFrog dev repo and a release bundle is
+#        created so the artifacts can be promoted through JFrog.
+#
+# === Master feature-style build (publish from master without tagging) ===
+#   Dispatch on master with `release=true` and `skip_tagging=true`: the
+#   master+sha suffix, no git tag, a release bundle is still produced.
+#
+# === Test (dry-run) ===
+#   Dispatch with `release=false` from any branch: builds run end-to-end,
+#   artifacts available on the GHA run page, no tag, no JFrog publish,
+#   no release bundle.
+#
+# === Tagging rules (summary) ===
+#   A git tag is created ONLY when:
+#       release=true  AND  ref==refs/heads/master  AND  skip_tagging=false
+#   Release bundles are produced on every publish (`release=true`) regardless
+#   of branch or `skip_tagging`, since the bundle is what enables JFrog
+#   promotion.
+
+name: Build and Release
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+defaults:
+  run:
+    shell: bash
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish packages to JFrog (and push Docker tags) and create a JFrog release bundle (the promotion unit). On master, also creates the git tag from VERSION. On other branches, the git tag is always skipped. Uncheck for a dry-run build (no publish, no bundle)."
+        type: boolean
+        default: false
+      skip_tagging:
+        description: "Skip the git tag even on master (treat as feature-style build). Release bundle is still produced when release=true. No effect on other branches, which never tag."
+        type: boolean
+        default: false
+
+# Two runs on the same ref resolve to the same VERSION and race each other to
+# the same artifact paths (deb/rpm pools are flat: last write wins). Serialise
+# instead of cancelling -- a half-published run must finish, not be interrupted.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The C client asvalidation links. Keep in step with .build.yml.
+  C_CLIENT_VERSION: "7.3.0"
+
+jobs:
+  validate-inputs:
+    name: Validate VERSION file
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      VERSION: ${{ steps.read.outputs.VERSION }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Read and validate VERSION
+        id: read
+        env:
+          SKIP_TAGGING: ${{ inputs.skip_tagging }}
+        run: |
+          set -euo pipefail
+          # build/version makes the format check, so a VERSION the build would
+          # reject never gets this far.
+          build/version -v >/dev/null
+          VERSION=$(cat VERSION)
+
+          # Reject a reused version before anything is built. create-tag checks
+          # this too, but only after the packages and the release bundle are
+          # published -- by then the previous build's files in the flat deb/rpm
+          # pools have already been overwritten.
+          if [[ "${GITHUB_REF}" == "refs/heads/master" && "${SKIP_TAGGING}" != "true" ]]; then
+            for tag in "${VERSION}" "v${VERSION}"; do
+              if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+                echo "::error::Tag '${tag}' already exists. Bump VERSION (Bump Version workflow) to the next -rcN before releasing again." >&2
+                exit 1
+              fi
+            done
+          fi
+
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "VERSION: $VERSION"
+
+  get-version:
+    needs: validate-inputs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      VERSION: ${{ steps.compute.outputs.version }}
+      BUILD_VERSION: ${{ steps.compute.outputs.build_version }}
+      RELEASE: ${{ steps.release.outputs.RELEASE }}
+      DEB_AMD64: ${{ steps.deb-name.outputs.amd64 }}
+      DEB_ARM64: ${{ steps.deb-name.outputs.arm64 }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compute VERSION (SemVer-aware for branch builds)
+        id: compute
+        env:
+          BASE: ${{ needs.validate-inputs.outputs.VERSION }}
+          SKIP_TAGGING: ${{ inputs.skip_tagging }}
+        run: |
+          set -euo pipefail
+          # See the VERSION / BUILD_VERSION contract in this file's header.
+          if [[ "${GITHUB_REF}" == "refs/heads/master" && "${SKIP_TAGGING}" != "true" ]]; then
+            VERSION="${BASE}"
+            BUILD_VERSION="${BASE}"
+          else
+            BRANCH_SLUG=$(printf '%s' "${GITHUB_REF_NAME}" | sed 's/[^A-Za-z0-9-]/-/g')
+            SHORT_SHA="${GITHUB_SHA::9}"
+            VERSION="${BASE}-${BRANCH_SLUG}-${SHORT_SHA}"
+            BUILD_VERSION="$(.github/bin/pkg_release.sh "${BASE}" version)-${SHORT_SHA}"
+          fi
+          echo "VERSION:       ${VERSION}"
+          echo "BUILD_VERSION: ${BUILD_VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build_version=${BUILD_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Derive package version and iteration
+        id: release
+        env:
+          BUILD_VERSION: ${{ steps.compute.outputs.build_version }}
+        run: |
+          set -euo pipefail
+          .github/bin/pkg_release.sh "${BUILD_VERSION}" all | tee -a "$GITHUB_OUTPUT"
+
+      # The name pkg/Makefile gives the .deb the docker image installs, emitted
+      # once here because docker-verify builds the image and docker-build
+      # publishes it -- deriving it twice is how the two drift apart. Format is
+      # <name>_<pkg-version>-<iteration><distro>_<dpkg-arch>.deb, from the
+      # ubuntu24.04 build because the image is based on ubuntu:24.04.
+      - name: Derive the .deb names the docker image installs
+        id: deb-name
+        env:
+          RELEASE: ${{ steps.release.outputs.RELEASE }}
+        run: |
+          set -euo pipefail
+          [[ -n "${RELEASE}" ]] || { echo "ERROR: empty RELEASE" >&2; exit 1; }
+          for arch in amd64 arm64; do
+            echo "${arch}=aerospike-asvalidation_${RELEASE}ubuntu24.04_${arch}.deb"
+          done | tee -a "$GITHUB_OUTPUT"
+
+  build-artifacts:
+    needs: get-version
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [ubuntu-24.04, ubuntu-24.04-arm]
+        distro:
+          - el8
+          - el9
+          - el10
+          - amzn2023
+          - debian12
+          - debian13
+          - ubuntu22.04
+          - ubuntu24.04
+          - ubuntu26.04
+    runs-on: ${{ matrix.host }}
+    container: >-
+      ${{ matrix.distro == 'el8' && 'redhat/ubi8:8.10' ||
+        matrix.distro == 'el9' && 'redhat/ubi9:9.6' ||
+        matrix.distro == 'el10' && 'redhat/ubi10:10.0' ||
+        matrix.distro == 'amzn2023' && 'amazonlinux:2023.9.20251208.0' ||
+        matrix.distro == 'debian12' && 'debian:bookworm-20230411' ||
+        matrix.distro == 'debian13' && 'debian:trixie-20251020' ||
+        matrix.distro == 'ubuntu22.04' && 'ubuntu:jammy-20231004' ||
+        matrix.distro == 'ubuntu24.04' && 'ubuntu:noble-20251013' ||
+        matrix.distro == 'ubuntu26.04' && 'ubuntu:resolute-20260421' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Install prereqs
+        run: |
+          set -euo pipefail
+          case "${{ matrix.distro }}" in
+            ubuntu*|debian*)
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update && apt-get install -y git ca-certificates
+              ;;
+            el*|amzn*)
+              dnf -y install git ca-certificates
+              ;;
+          esac
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # After the main checkout, which cleans the workspace. client/ is in
+      # .gitignore, the same place .build.yml puts it.
+      - name: Checkout C client
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: aerospike/aerospike-client-c
+          ref: ${{ env.C_CLIENT_VERSION }}
+          submodules: recursive
+          path: client
+
+      - name: Install build dependencies
+        env:
+          ENV_DISTRO: ${{ matrix.distro }}
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          source .github/bin/install_deps.sh
+          "install_deps_${{ matrix.distro }}"
+
+      - name: Build and package
+        env:
+          ENV_DISTRO: ${{ matrix.distro }}
+          BUILD_DISTRO: ${{ matrix.distro }}
+          PKG_VERSION: ${{ needs.get-version.outputs.BUILD_VERSION }}
+        run: |
+          set -euo pipefail
+          source .github/bin/build_package.sh
+          build_packages
+
+      # Per-leg build-info: the environment and git revision each package was
+      # built from. upload-artifacts-to-jfrog discovers these as children of
+      # the release build-info through its jf-metadata-build-id prefix, so the
+      # ID below must keep that prefix. Best-effort: metadata about a package
+      # that built, signed and tested clean is not worth failing a release
+      # over. A leg that fails here still ships and says so as a warning.
+      - name: Install JFrog CLI
+        if: inputs.release == true
+        continue-on-error: true
+        uses: step-security/setup-jfrog-cli@53aeacb709fce45d0baf69a13ec3342f7e2d71a9 # v5.1.0
+        env:
+          JF_URL: https://artifact.aerospike.io
+          JF_PROJECT: database
+        with:
+          version: 2.78.8
+          oidc-provider-name: database-gh-aerospike
+          oidc-audience: database-gh-aerospike
+
+      - name: Publish build-info
+        if: inputs.release == true
+        env:
+          JF_BUILD_NAME: aerospike-asvalidation
+          JF_BUILD_ID: ${{ needs.get-version.outputs.VERSION }}-metadata-${{ matrix.distro }}-${{ contains(matrix.host, 'arm') && 'aarch64' || 'x86_64' }}
+        run: |
+          set -euo pipefail
+          # Guarded because the step above is allowed to fail.
+          if ! command -v jf >/dev/null; then
+            echo "::warning::JFrog CLI unavailable, skipping build-info for ${JF_BUILD_ID}"
+            exit 0
+          fi
+          jf rt build-collect-env "$JF_BUILD_NAME" "$JF_BUILD_ID" --project=database \
+            || echo "::warning::build-collect-env failed for ${JF_BUILD_ID}"
+          jf rt build-add-git "$JF_BUILD_NAME" "$JF_BUILD_ID" --project=database \
+            || echo "::warning::build-add-git failed for ${JF_BUILD_ID}"
+          jf rt build-publish "$JF_BUILD_NAME" "$JF_BUILD_ID" --project=database \
+            || echo "::warning::build-publish failed for ${JF_BUILD_ID}"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: unsigned-artifacts-${{ needs.get-version.outputs.VERSION }}-${{ matrix.distro }}-${{ contains(matrix.host, 'arm') && 'aarch64' || 'x86_64' }}
+          path: target/packages/
+          if-no-files-found: error
+          retention-days: 1
+
+  build-mac-artifacts:
+    needs: get-version
+    strategy:
+      fail-fast: false
+      matrix:
+        # One publisher per arch (the oldest runner): every leg of an arch
+        # builds the same file name, so a second uploader would collide. The
+        # unmarked legs still build and test, which is the point of the matrix.
+        include:
+          - { os: macos-15-intel, publish: true }
+          - { os: macos-26-intel }
+          - { os: macos-15, publish: true }
+          - { os: macos-26 }
+    runs-on: ${{ matrix.os }}
+    env:
+      # Keep in step with MACOS_MIN_VERSION in pkg/Makefile. Job level, not
+      # step level: the C client is compiled by its own step and must carry
+      # the same floor.
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Checkout C client
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: aerospike/aerospike-client-c
+          ref: ${{ env.C_CLIENT_VERSION }}
+          submodules: recursive
+          path: client
+
+      # libyaml.a and Homebrew's static OpenSSL are linked in, so the binary
+      # needs nothing from Homebrew at run time. CPATH is the OpenSSL include
+      # path for both compiles: neither Makefile knows the arm64 prefix.
+      - name: Install build dependencies (Homebrew)
+        run: |
+          set -euo pipefail
+          brew install libyaml openssl@3
+          echo "OPENSSL_PREFIX=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          echo "CPATH=$(brew --prefix openssl@3)/include" >> "$GITHUB_ENV"
+
+      - name: Build C client
+        run: make -C client -j"$(sysctl -n hw.ncpu)"
+
+      - name: Build mac asvalidation
+        env:
+          # BUILD_VERSION, matching the linux leg and the .pkg below, so one
+          # release cannot report two versions depending on the building OS.
+          VERSION: ${{ needs.get-version.outputs.BUILD_VERSION }}
+        run: |
+          set -euo pipefail
+          make CLIENTREPO="${GITHUB_WORKSPACE}/client" OPENSSL_STATIC_PATH="${OPENSSL_PREFIX}/lib" VERSION="${VERSION}"
+          otool -L bin/asvalidation
+
+      # Assert the embedded version rather than trusting it: a re-link that
+      # loses VERSION falls back to build/version and packages a binary that
+      # disagrees with the artifact it ships in.
+      - name: Sanity test asvalidation
+        env:
+          EXPECTED_VERSION: ${{ needs.get-version.outputs.BUILD_VERSION }}
+        run: |
+          set -euo pipefail
+          bin/asvalidation --usage >/dev/null
+          out=$(bin/asvalidation --version 2>&1)
+          printf '%s\n' "$out"
+          . .github/bin/test/version_lib.sh
+          expected=$(expected_version VERSION)
+          assert_version_output "$out" "$expected"
+
+      - name: Create .pkg
+        env:
+          VERSION: ${{ needs.get-version.outputs.BUILD_VERSION }}
+        run: |
+          set -euo pipefail
+          make -C pkg osx-pkg VERSION="${VERSION}"
+          # pkg/Makefile emits the shipping name directly (MAC_PKG there).
+          # Move whatever the build produced, asserting there is exactly one
+          # so a stale target/ never ships silently.
+          pkgs=$(find target/packages -maxdepth 1 -type f -name '*.pkg')
+          if [[ -n "${pkgs}" ]]; then
+            n=$(printf '%s\n' "${pkgs}" | wc -l | tr -d ' ')
+          else
+            n=0
+          fi
+          [[ "${n}" -eq 1 ]] || {
+            echo "ERROR: expected exactly 1 .pkg under target/packages, found ${n}" >&2
+            printf '%s\n' "${pkgs}" >&2
+            exit 1; }
+          mv "${pkgs}" .
+          echo "PKG_NAME=$(basename "${pkgs}")" >> "$GITHUB_ENV"
+          echo "==> built $(basename "${pkgs}")"
+          # Only the two publisher legs upload and they differ by arch, so the
+          # arch alone is unique. Assigned on its own line: a failing command
+          # substitution inside an argument does not trip `set -e`.
+          arch=$(uname -m)
+          [[ -n "${arch}" ]] || { echo "::error::uname -m returned nothing" >&2; exit 1; }
+          echo "PKG_PLATFORM=${arch}" >> "$GITHUB_ENV"
+
+      - name: Upload build artifacts
+        if: matrix.publish
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          # Consumers match on the "unsigned-artifacts-<VERSION>" prefix and
+          # merge-multiple, so this suffix only has to stay unique per leg.
+          name: unsigned-artifacts-${{ needs.get-version.outputs.VERSION }}-${{ env.PKG_PLATFORM }}
+          path: ${{ env.PKG_NAME }}
+          if-no-files-found: error
+          retention-days: 1
+
+  organize-built-artifacts:
+    needs: [build-artifacts, build-mac-artifacts, get-version]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Download All Matrix Artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: build-artifacts
+          pattern: unsigned-artifacts-${{ needs.get-version.outputs.VERSION }}*
+          merge-multiple: true
+
+      - name: Upload packaged Artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: unsigned-artifacts-${{ needs.get-version.outputs.VERSION }}
+          path: build-artifacts
+          overwrite: true
+          retention-days: 1
+
+  notarize-mac-artifacts:
+    needs:
+      - get-version
+      - organize-built-artifacts
+    uses: aerospike/shared-workflows/.github/workflows/reusable_sign-mac-artifacts.yaml@v3.7.0
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      gh-unsigned-artifacts: unsigned-artifacts-${{ needs.get-version.outputs.VERSION }}
+      # As observed in shared-workflows v3.7.0: matches_glob() is a bash `case`
+      # match, not a real globstar matcher, so "**/*.pkg" requires a literal "/"
+      # and never matches our flat artifact tree -- every pkg gets skipped and
+      # the job still exits 0. Do not "fix" this back to "**/*.pkg" unless the
+      # pinned signer above implements real globstar matching.
+      artifact-glob: "*.pkg"
+      signing-identity: "Developer ID Application: Aerospike, Inc. (22224RFU67)"
+      installer-identity: "Developer ID Installer: Aerospike, Inc. (22224RFU67)"
+      gh-workflows-ref: "v3.7.0"
+      gh-retention-days: 1
+    secrets:
+      apple-application-cert: ${{ secrets.APPLE_APPLICATION_CERT }}
+      apple-id: ${{ secrets.APPLE_ID }}
+      apple-installer-cert: ${{ secrets.APPLE_INSTALLER_CERT }}
+      apple-notarization-password: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+      apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+
+  sign-artifacts:
+    needs:
+      - get-version
+      - notarize-mac-artifacts
+    uses: aerospike/shared-workflows/.github/workflows/reusable_sign-artifacts.yaml@v3.7.0
+    with:
+      gh-artifact-name: signed-artifacts-${{ needs.get-version.outputs.VERSION }}
+      gh-unsigned-artifacts: unsigned-artifacts-${{ needs.get-version.outputs.VERSION }}
+      gh-workflows-ref: "v3.7.0"
+    secrets:
+      gpg-private-key: ${{ secrets.GPG_SECRET_KEY }}
+      gpg-public-key: ${{ secrets.GPG_PUBLIC_KEY }}
+      gpg-key-pass: ${{ secrets.GPG_PASS }}
+
+  test-install-linux-and-execute:
+    name: Test install & execute (${{ matrix.distro }}, ${{ contains(matrix.host, 'arm') && 'arm64' || 'amd64' }})
+    needs: [get-version, sign-artifacts]
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [ubuntu-24.04, ubuntu-24.04-arm]
+        distro:
+          - el8
+          - el9
+          - el10
+          - amzn2023
+          - debian12
+          - debian13
+          - ubuntu22.04
+          - ubuntu24.04
+          - ubuntu26.04
+    runs-on: ${{ matrix.host }}
+    container: >-
+      ${{ matrix.distro == 'el8' && 'redhat/ubi8:8.10' ||
+        matrix.distro == 'el9' && 'redhat/ubi9:9.6' ||
+        matrix.distro == 'el10' && 'redhat/ubi10:10.0' ||
+        matrix.distro == 'amzn2023' && 'amazonlinux:2023.9.20251208.0' ||
+        matrix.distro == 'debian12' && 'debian:bookworm-20230411' ||
+        matrix.distro == 'debian13' && 'debian:trixie-20251020' ||
+        matrix.distro == 'ubuntu22.04' && 'ubuntu:jammy-20231004' ||
+        matrix.distro == 'ubuntu24.04' && 'ubuntu:noble-20251013' ||
+        matrix.distro == 'ubuntu26.04' && 'ubuntu:resolute-20260421' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Install prereqs
+        run: |
+          set -euo pipefail
+          case "${{ matrix.distro }}" in
+            ubuntu*|debian*)
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y --no-install-recommends git ca-certificates curl tar
+              ;;
+            el*|amzn*)
+              # UBI 9 / AL2023 ship curl-minimal; installing "curl" conflicts with it.
+              dnf -y install findutils git ca-certificates tar gzip
+              ;;
+          esac
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Download signed artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-artifacts-${{ needs.get-version.outputs.VERSION }}
+          path: ./packages
+
+      - name: Install package locally
+        run: |
+          set -euo pipefail
+          deb_arch="${{ contains(matrix.host, 'arm') && 'arm64' || 'amd64' }}"
+          rpm_arch="${{ contains(matrix.host, 'arm') && 'aarch64' || 'x86_64' }}"
+          case "${{ matrix.distro }}" in
+            ubuntu*|debian*)
+              export DEBIAN_FRONTEND=noninteractive
+              pkg=$(find ./packages -name "*${{ matrix.distro }}_${deb_arch}.deb" | head -1)
+              [[ -n "${pkg}" ]] || { echo "ERROR: no .deb found for ${{ matrix.distro }}/${deb_arch}" >&2; exit 1; }
+              apt-get install -y "${pkg}"
+              ;;
+            el*|amzn*)
+              pkg=$(find ./packages -name "*.${{ matrix.distro }}.${rpm_arch}.rpm" | head -1)
+              [[ -n "${pkg}" ]] || { echo "ERROR: no .rpm found for ${{ matrix.distro }}/${rpm_arch}" >&2; exit 1; }
+              dnf install -y "${pkg}"
+              ;;
+          esac
+
+      - name: Install bats
+        env:
+          BATS_VERSION: "1.11.0"
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz" -o /tmp/bats.tgz
+          tar -xzf /tmp/bats.tgz -C /tmp
+          "/tmp/bats-core-${BATS_VERSION}/install.sh" /usr/local
+          bats --version
+
+      - name: Verify installation
+        env:
+          EXPECTED_VERSION: ${{ needs.get-version.outputs.BUILD_VERSION }}
+        run: bats .github/bin/test/test_execute.bats
+
+  test-install-mac-and-execute:
+    name: Test install & execute (${{ matrix.os }})
+    needs: [get-version, sign-artifacts]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-26-intel, macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Download signed artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-artifacts-${{ needs.get-version.outputs.VERSION }}
+          path: ./packages
+
+      - name: Verify .pkg is signed and notarized
+        env:
+          # Must match `installer-identity` on the notarize-mac-artifacts job.
+          # A reusable-workflow `with:` cannot read `env`, so this is the one
+          # place the literal is repeated -- keep the two in sync.
+          INSTALLER_IDENTITY: "Developer ID Installer: Aerospike, Inc. (22224RFU67)"
+        run: |
+          set -euo pipefail
+          # Resolve the pkg ONCE and export it, so the install step below
+          # cannot install a different file than the one verified here. One
+          # pkg per arch serves every macOS generation, so all four legs
+          # install the same two files.
+          arch=$(uname -m)
+          [[ -n "${arch}" ]] || { echo "ERROR: uname -m returned nothing" >&2; exit 1; }
+          pat="*-macos-${arch}.pkg"
+          # (mapfile would be the idiomatic reader, but the macOS runners ship
+          # bash 3.2, which has no mapfile builtin.)
+          matches=$(find ./packages -type f -name "${pat}")
+          if [[ -n "${matches}" ]]; then
+            n=$(printf '%s\n' "${matches}" | wc -l | tr -d ' ')
+          else
+            n=0
+          fi
+          [[ "${n}" -eq 1 ]] || {
+            echo "ERROR: expected exactly 1 .pkg matching ${pat}, found ${n}" >&2
+            printf '%s\n' "${matches}" >&2
+            exit 1; }
+          pkg="${matches}"
+          echo "VERIFIED_PKG=${pkg}" >> "$GITHUB_ENV"
+
+          # An unsigned pkg exits non-zero here; a pkg signed by the WRONG
+          # identity exits 0 and is caught by the assertion below.
+          sig=$(pkgutil --check-signature "${pkg}") || {
+            echo "ERROR: ${pkg} is not signed -- check the notarize-mac-artifacts job" >&2
+            printf '%s\n' "${sig}" >&2
+            exit 1; }
+          printf '%s\n' "${sig}"
+
+          # Assert the FULL configured identity, Team ID included, at the leaf
+          # ("1. ") position. -F so "(", ")" and "." are literal, not regex.
+          printf '%s\n' "${sig}" | grep -qF "1. ${INSTALLER_IDENTITY}" || {
+            echo "ERROR: ${pkg} leaf signer is not ${INSTALLER_IDENTITY}" >&2
+            printf '%s\n' "${sig}" >&2
+            exit 1; }
+
+          # spctl runs the assessment a customer's Mac actually applies.
+          spctl --assess --type install -vv "${pkg}" || {
+            echo "ERROR: ${pkg} is rejected by Gatekeeper -- check the notarize-mac-artifacts job" >&2
+            exit 1; }
+          # `stapler validate` returns the SAME exit 68 for "no ticket" and
+          # "the network timed out". Retry, then distinguish the two: an
+          # Apple-side network blip must not fail a release whose signature,
+          # identity and Gatekeeper assessment have all passed, while a
+          # genuinely missing ticket still must.
+          staple_ok=0
+          staple_out=""
+          for attempt in 1 2 3 4 5; do
+            if staple_out=$(xcrun stapler validate "${pkg}" 2>&1); then
+              printf '%s\n' "${staple_out}"
+              staple_ok=1
+              break
+            fi
+            echo "stapler validate attempt ${attempt}/5 failed, retrying in $((attempt * 5))s" >&2
+            sleep "$((attempt * 5))"
+          done
+          if [[ "${staple_ok}" -ne 1 ]]; then
+            printf '%s\n' "${staple_out}" >&2
+            if printf '%s\n' "${staple_out}" | grep -qE 'NSURLError|timed out|CloudKit|kCFErrorDomainCFNetwork'; then
+              echo "WARNING: stapler validate could not reach Apple after 5 attempts (network). Signature, identity and Gatekeeper assessment passed -- not failing the release on this." >&2
+            else
+              echo "ERROR: ${pkg} has no stapled notarization ticket -- check the notarize-mac-artifacts job" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Install .pkg locally
+        run: |
+          set -euo pipefail
+          sudo installer -pkg "${VERIFIED_PKG}" -target /
+
+      - name: Verify installed files are root-owned and entrypoints execute
+        run: |
+          set -euo pipefail
+          for rel in asvalidation; do
+            [[ -e "/usr/local/aerospike/bin/${rel}" ]] || {
+              echo "ERROR: /usr/local/aerospike/bin/${rel} missing after install -- did the pkg install location change?" >&2
+              exit 1; }
+          done
+
+          scanned=$(find /usr/local/aerospike -type f | wc -l | tr -d ' ')
+          [[ "${scanned}" -ge 1 ]] || {
+            echo "ERROR: ownership scan examined 0 files under /usr/local/aerospike" >&2
+            exit 1; }
+          echo "==> scanning ${scanned} installed file(s)"
+
+          # The signer rebuilds the pkg Payload with the build runner's uid
+          # (see pkg/mac-scripts/postinstall). The pkg installs TWO roots
+          # (/usr/local/aerospike and the /usr/local/bin symlinks), so both
+          # are scanned; /usr/local/bin is filtered by -lname because Homebrew
+          # owns unrelated entries there.
+          bad=$(
+            { find /usr/local/aerospike \( ! -user root -o -perm -0002 -o -perm -0020 \) -print
+              find /usr/local/bin -maxdepth 1 -lname '*aerospike/bin/*' ! -user root -print
+            }
+          ) || {
+            echo "ERROR: ownership scan failed -- see stderr above" >&2
+            exit 1; }
+          if [[ -n "${bad}" ]]; then
+            echo "ERROR: $(printf '%s\n' "${bad}" | wc -l | tr -d ' ') installed path(s) not root-owned or group/world-writable" >&2
+            printf '%s\n' "${bad}" | head -20 | while IFS= read -r p; do ls -ldn "${p}" >&2; done
+            exit 1
+          fi
+          echo "==> installed files are root-owned and not group/world-writable"
+
+          # The shared signer applies hardened runtime with NO entitlements.
+          # asvalidation needs none: its only dynamic dependencies are Apple's
+          # libSystem and libz. A bundled third-party dylib would fail at exec,
+          # so catch it here with a message that names signing.
+          for rel in asvalidation; do
+            b="/usr/local/aerospike/bin/${rel}"
+            [[ -x "${b}" ]] || continue
+            "${b}" --version >/dev/null 2>&1 || {
+              echo "ERROR: ${b} installed but will not execute -- likely hardened runtime without entitlements (see notarize-mac-artifacts)" >&2
+              codesign -d --entitlements - "${b}" >&2 || true
+              exit 1; }
+          done
+          echo "==> all entrypoints execute under hardened runtime"
+
+          # Every embedded Mach-O must carry a signature. `-perm +111` is the
+          # BSD find spelling of any-exec-bit; GNU's `/mode` is an error here.
+          execs=$(find /usr/local/aerospike -type f -perm +111)
+          [[ -n "${execs}" ]] || {
+            echo "ERROR: found 0 executable files under /usr/local/aerospike -- the Mach-O signature scan would pass vacuously" >&2
+            exit 1; }
+          unsigned=$(while IFS= read -r b; do
+              file "${b}" | grep -q "Mach-O" || continue
+              codesign -dv "${b}" >/dev/null 2>&1 || echo "${b}"
+            done <<< "${execs}")
+          if [[ -n "${unsigned}" ]]; then
+            echo "ERROR: unsigned Mach-O binary(ies) in the installed tree -- check the notarize-mac-artifacts job" >&2
+            printf '%s\n' "${unsigned}" | head -20 >&2
+            exit 1
+          fi
+          echo "==> every embedded Mach-O is signed"
+
+      - name: Install bats
+        run: brew install bats-core
+
+      - name: Verify installation
+        env:
+          EXPECTED_VERSION: ${{ needs.get-version.outputs.BUILD_VERSION }}
+        run: bats .github/bin/test/test_execute.bats
+
+  organize-signed-artifacts:
+    name: Organize signed artifacts for deploy
+    needs: [get-version, test-install-linux-and-execute, test-install-mac-and-execute]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Download signed artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-artifacts-${{ needs.get-version.outputs.VERSION }}
+          path: signed-artifacts
+
+      - name: Extract package files (flatten paths)
+        run: |
+          set -euo pipefail
+          mkdir -p deploy-artifacts
+          find signed-artifacts/ -type f \( \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.tgz' -o \
+            -name '*.tar' -o -name '*.dmg' -o -name '*.pkg' -o \
+            -name '*.exe' -o -name '*.asc' -o -name '*.sha256' \
+          \) -exec cp -t deploy-artifacts/ {} +
+          count=$(find deploy-artifacts/ -maxdepth 1 -type f | wc -l)
+          echo "Deploy artifacts: ${count} file(s)"
+          ls -la deploy-artifacts/
+          [[ ${count} -gt 0 ]] || { echo "ERROR: no deploy artifacts found" >&2; exit 1; }
+
+      - name: Upload deploy artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: deploy-artifacts-${{ needs.get-version.outputs.VERSION }}
+          path: deploy-artifacts/
+          retention-days: 1
+
+  # Provenance is bound to what actually ships, so it runs after signing:
+  # signing rewrites the deb/rpm in place, and an attestation of the unsigned
+  # digest would never verify against the file a customer downloads.
+  attest-artifacts:
+    name: Attest build provenance
+    if: inputs.release == true
+    needs:
+      - get-version
+      - organize-signed-artifacts
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Download deploy artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: deploy-artifacts-${{ needs.get-version.outputs.VERSION }}
+          path: deploy-artifacts
+
+      - name: Stage installable packages
+        run: |
+          set -euo pipefail
+          # Detached signatures and checksums describe a package rather than
+          # being build outputs of their own, so they get no provenance.
+          mkdir -p attest
+          find deploy-artifacts/ -maxdepth 1 -type f \( \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.tgz' -o \
+            -name '*.tar' -o -name '*.pkg' -o -name '*.exe' \
+          \) -exec cp -t attest/ {} +
+          count=$(find attest/ -maxdepth 1 -type f | wc -l)
+          echo "Attesting ${count} package(s)"
+          ls -la attest/
+          [[ ${count} -gt 0 ]] || { echo "ERROR: no packages to attest" >&2; exit 1; }
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: attest/*
+
+  upload-artifacts-to-jfrog:
+    needs:
+      - get-version
+      - organize-signed-artifacts
+    uses: aerospike/shared-workflows/.github/workflows/reusable_deploy-artifacts.yaml@v3.7.0
+    with:
+      jf-project: database
+      jf-build-name: "aerospike-asvalidation"
+      version: ${{ needs.get-version.outputs.VERSION }}
+      oidc-provider-name: database-gh-aerospike
+      oidc-audience: database-gh-aerospike
+      gh-artifact-name: deploy-artifacts-${{ needs.get-version.outputs.VERSION }}
+      gh-retention-days: 1
+      dry-run: ${{ inputs.release != true }}
+      jf-build-id: ${{ needs.get-version.outputs.VERSION }}
+      jf-metadata-build-id: ${{ needs.get-version.outputs.VERSION }}-metadata
+      gh-workflows-ref: "v3.7.0"
+
+  # Pre-publish gate. reusable_docker-build-deploy pushes from inside its build
+  # leg and offers no test hook, so this builds the same image the same way,
+  # exercises it, and publishes nothing -- docker-build needs it, so nothing is
+  # pushed until it passes. Unconditional: a dry run has to exercise the image.
+  docker-verify:
+    name: Docker build & smoke test (${{ matrix.arch }})
+    needs: [get-version, organize-signed-artifacts]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04,     arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same artifact and same in-context path docker-build hands the shared
+      # workflow through gh-context-artifacts-json, so this builds from the
+      # bytes that will be published, not a rebuild of them.
+      - name: Download deploy artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: deploy-artifacts-${{ needs.get-version.outputs.VERSION }}
+          path: ./deploy-artifacts
+
+      - name: Set up Docker Buildx
+        uses: step-security/setup-buildx-action@f931205d68723ad9589fd2a7e2ece238bf9de341 # v4.0.0
+
+      - name: Install Snyk CLI
+        run: npm install -g snyk@1.1304.3
+
+      - name: Build the image (no push)
+        env:
+          DEB_AMD64: ${{ needs.get-version.outputs.DEB_AMD64 }}
+          DEB_ARM64: ${{ needs.get-version.outputs.DEB_ARM64 }}
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/${{ matrix.arch }} \
+            --file docker/Dockerfile \
+            --build-arg ASVALIDATION_LOCAL_PKG_AMD64="deploy-artifacts/${DEB_AMD64}" \
+            --build-arg ASVALIDATION_LOCAL_PKG_ARM64="deploy-artifacts/${DEB_ARM64}" \
+            --load -t asvalidation-verify:${{ matrix.arch }} .
+
+      - name: Smoke test
+        env:
+          IMAGE: asvalidation-verify:${{ matrix.arch }}
+          BUILD_VERSION: ${{ needs.get-version.outputs.BUILD_VERSION }}
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Reuse the linux-install bats smoke test against the image by
+          # shimming the tool binary to a `docker run` call.
+          sudo apt-get update -qq && sudo apt-get install -y bats
+          SHIM_DIR=$(mktemp -d)
+          cat > "${SHIM_DIR}/asvalidation" <<EOF
+          #!/bin/sh
+          exec docker run --rm "${IMAGE}" asvalidation "\$@"
+          EOF
+          chmod +x "${SHIM_DIR}/asvalidation"
+          PATH="${SHIM_DIR}:${PATH}" EXPECTED_VERSION="${BUILD_VERSION}" bats .github/bin/test/test_execute.bats
+
+          # Entrypoint contract. test_entrypoint.bats pins the script against a
+          # fixture on every PR; this runs the same contract against the built
+          # image, which is what catches a lost exec bit, a missing image-info,
+          # or a Dockerfile that dropped the ENTRYPOINT or grew a CMD back.
+          [[ -z "$(docker inspect -f '{{join .Config.Cmd " "}}' "${IMAGE}")" ]] \
+            || { echo "ERROR: the image has a CMD; it would hide the usage message" >&2; exit 1; }
+          usage=$(docker run --rm "${IMAGE}") \
+            || { echo "ERROR: the image failed to print usage with no arguments" >&2; exit 1; }
+          title_re='^Aerospike asvalidation image \(aerospike-asvalidation [^() ]+\)$'
+          [[ "$(head -n1 <<<"${usage}")" =~ ${title_re} ]] \
+            || { echo "ERROR: unexpected usage title: '$(head -n1 <<<"${usage}")'" >&2; exit 1; }
+          grep -qE '^  docker run --rm <image> asvalidation( |$)' <<<"${usage}" \
+            || { echo "ERROR: the usage message does not list asvalidation" >&2; exit 1; }
+          grep -qF -- '--entrypoint bash' <<<"${usage}" \
+            || { echo "ERROR: the usage message does not say how to get a shell" >&2; exit 1; }
+
+          # 127 exactly: 126 means the entrypoint lost its exec bit and 1 or 2
+          # mean it crashed. Usage on error belongs on stderr. set +e because
+          # under set -e the non-zero exit would end the step first.
+          set +e
+          docker run --rm "${IMAGE}" --version >"${SHIM_DIR}/ep.out" 2>"${SHIM_DIR}/ep.err"; rc=$?
+          set -e
+          [[ "${rc}" -eq 127 ]] \
+            || { echo "ERROR: a leading-flag first argument exited ${rc}, expected 127" >&2; exit 1; }
+          [[ ! -s "${SHIM_DIR}/ep.out" ]] \
+            || { echo "ERROR: the refusal wrote to stdout; usage on error belongs on stderr" >&2; exit 1; }
+          grep -qF "Error: '--version' is an option, not a binary." "${SHIM_DIR}/ep.err" \
+            || { echo "ERROR: the refusal did not name the bad argument on stderr" >&2; exit 1; }
+
+          # Passthrough: anything executable runs as given.
+          set +e
+          docker run --rm "${IMAGE}" sh -c 'exit 3'; rc=$?
+          set -e
+          [[ "${rc}" -eq 3 ]] \
+            || { echo "ERROR: passthrough of \"sh -c 'exit 3'\" exited ${rc}, expected 3" >&2; exit 1; }
+
+          if [[ -n "${SNYK_TOKEN:-}" ]]; then
+            snyk container test "${IMAGE}" \
+              --platform=linux/${{ matrix.arch }} \
+              --file=docker/Dockerfile || true
+          fi
+
+  # Image build/publish/attest is delegated to shared-workflows: it builds each
+  # platform on a native runner, pushes by digest, stitches one manifest list,
+  # publishes the docker build-info and attests the index. v4.1.0 because
+  # gh-context-artifacts-json -- which puts the signed .deb inside the build
+  # context -- only exists from v4.1.0.
+  docker-build:
+    name: Docker build & publish
+    needs: [get-version, organize-signed-artifacts, docker-verify]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: aerospike/shared-workflows/.github/workflows/reusable_docker-build-deploy.yaml@v4.1.0
+    with:
+      # RELEASE, not BUILD_VERSION: rcN belongs in the package iteration,
+      # never in an image tag.
+      app-version: ${{ needs.get-version.outputs.RELEASE }}
+      app-name: Aerospike asvalidation
+      image-name: aerospike-asvalidation
+      jf-project: database
+      jf-build-name: aerospike-asvalidation-docker
+      repo-scope: -docker-dev-local
+      oidc-provider-name: database-gh-aerospike
+      oidc-audience: database-gh-aerospike
+      context: .
+      file: docker/Dockerfile
+      platforms: linux/amd64,linux/arm64
+      # Still runs on a dry run, publishing nothing, so the shared-workflow
+      # wiring is exercised before a real release.
+      push: ${{ inputs.release == true }}
+      # Pins the tag set to exactly <RELEASE>: neither the bare major nor
+      # "latest" may move on an rc build.
+      versions-override: ${{ needs.get-version.outputs.RELEASE }}
+      gh-context-artifacts-json: '[{"name": "deploy-artifacts-${{ needs.get-version.outputs.VERSION }}", "dest": "deploy-artifacts"}]'
+      build-args-json: '{"ASVALIDATION_LOCAL_PKG_AMD64": "deploy-artifacts/${{ needs.get-version.outputs.DEB_AMD64 }}", "ASVALIDATION_LOCAL_PKG_ARM64": "deploy-artifacts/${{ needs.get-version.outputs.DEB_ARM64 }}"}'
+
+  # Post-publish confirmation, not the gate: that the manifest list the shared
+  # workflow stitched resolves, and that each arch pulls and runs from the
+  # index digest that was attested.
+  docker-test:
+    name: Docker published-image check (${{ matrix.arch }})
+    if: inputs.release == true
+    needs: [get-version, docker-build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04,     arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install JFrog CLI
+        id: jf
+        uses: step-security/setup-jfrog-cli@53aeacb709fce45d0baf69a13ec3342f7e2d71a9 # v5.1.0
+        env:
+          JF_URL: https://artifact.aerospike.io
+          JF_PROJECT: database
+        with:
+          version: 2.78.8
+          oidc-provider-name: database-gh-aerospike
+          oidc-audience: database-gh-aerospike
+
+      - name: Docker login to Artifactory
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        with:
+          registry: artifact.aerospike.io
+          username: ${{ steps.jf.outputs.oidc-user }}
+          password: ${{ steps.jf.outputs.oidc-token }}
+
+      - name: Check the published image
+        env:
+          IMAGE: ${{ needs.docker-build.outputs.image-ref }}
+          BUILD_VERSION: ${{ needs.get-version.outputs.BUILD_VERSION }}
+        run: |
+          set -euo pipefail
+          [[ -n "${IMAGE}" ]] || { echo "ERROR: docker-build produced no image-ref" >&2; exit 1; }
+          docker pull "${IMAGE}"
+
+          # Confirm the index really resolved to this leg's arch, so an arm64
+          # failure can never be masked by silently checking the amd64 manifest.
+          got=$(docker image inspect "${IMAGE}" --format '{{.Architecture}}')
+          [[ "${got}" == "${{ matrix.arch }}" ]] \
+            || { echo "ERROR: pulled ${got} image on ${{ matrix.arch }} runner" >&2; exit 1; }
+
+          source .github/bin/test/version_lib.sh
+          assert_version_output "$(docker run --rm "${IMAGE}" asvalidation --version)" "${BUILD_VERSION}"
+
+  # Release bundles are JFrog's promotion unit; produced on every publish
+  # regardless of branch or skip_tagging.
+  create-release-bundle:
+    if: inputs.release == true
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    needs:
+      - get-version
+      - attest-artifacts
+      - upload-artifacts-to-jfrog
+      - docker-build
+      - docker-test
+    uses: aerospike/shared-workflows/.github/workflows/reusable_create-release-bundle.yaml@v3.7.0
+    with:
+      jf-project: "database"
+      # The package build-info is published under VERSION by
+      # upload-artifacts-to-jfrog, but reusable_docker-build-deploy records the
+      # image build-info under the JFrog CLI default build number
+      # (github.run_number). The two names are versioned differently on purpose.
+      jf-build-names: "aerospike-asvalidation:${{ needs.get-version.outputs.VERSION }},aerospike-asvalidation-docker:${{ github.run_number }}"
+      jf-bundle-name: "aerospike-asvalidation"
+      oidc-provider-name: database-gh-aerospike
+      oidc-audience: database-gh-aerospike
+      version: ${{ needs.get-version.outputs.VERSION }}
+      gh-workflows-ref: v3.7.0
+      dry-run: false
+
+  # Tag-last: created only after every publish step succeeds. A failure
+  # anywhere upstream means no tag and no inconsistent state.
+  create-tag:
+    name: Create git tag (release marker)
+    if: inputs.release == true && github.ref == 'refs/heads/master' && inputs.skip_tagging != true
+    needs:
+      - validate-inputs
+      - get-version
+      - attest-artifacts
+      - upload-artifacts-to-jfrog
+      - docker-build
+      - docker-test
+      - create-release-bundle
+    runs-on: ubuntu-24.04
+    environment: deploy-to-main
+    permissions:
+      contents: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create and push tag
+        env:
+          VERSION: ${{ needs.get-version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          for tag in "${VERSION}" "v${VERSION}"; do
+            if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+              echo "::error::Tag '${tag}' already exists -- it was created between validate-inputs and here. Bump VERSION to the next -rcN and re-run." >&2
+              exit 1
+            fi
+          done
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "$VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/${VERSION}"
+          echo "Pushed tag: $VERSION"
+
+  promote-to-test:
+    name: Promote release bundle to TEST
+    if: github.ref == 'refs/heads/master'
+    needs: [get-version, create-release-bundle]
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Setup JFrog CLI
+        uses: step-security/setup-jfrog-cli@53aeacb709fce45d0baf69a13ec3342f7e2d71a9 # v5.1.0
+        env:
+          JF_URL: https://artifact.aerospike.io
+          JF_PROJECT: database
+        with:
+          version: 2.78.8
+          oidc-provider-name: database-gh-aerospike
+          oidc-audience: database-gh-aerospike
+
+      - name: Promote release bundle to TEST
+        env:
+          JFROG_PROJECT: database
+          RELEASE_BUNDLE_NAME: aerospike-asvalidation
+          JF_SIGNING_KEY: aerospike
+          VERSION: ${{ needs.get-version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          # Check if already promoted to TEST; surface any API error rather than swallowing it.
+          resp=$(jf rt curl -s -XGET "/lifecycle/api/v2/promotion/records/${RELEASE_BUNDLE_NAME}/${VERSION}?project=${JFROG_PROJECT}" 2>/dev/null) || {
+            echo "Warning: could not query promotion status, proceeding with promotion attempt."
+            resp=""
+          }
+          status=$(echo "$resp" | jq -r '.promotions[]? | select(.environment == "TEST") | .status' 2>/dev/null || true)
+          if [[ "$status" == "COMPLETED" ]]; then
+            echo "Release bundle '${RELEASE_BUNDLE_NAME}:${VERSION}' is already promoted to TEST, skipping."
+            exit 0
+          fi
+          echo "Promoting release bundle '${RELEASE_BUNDLE_NAME}:${VERSION}' to TEST environment..."
+          jf rbp \
+            --signing-key="${JF_SIGNING_KEY}" \
+            --project="${JFROG_PROJECT}" \
+            --sync=true \
+            "${RELEASE_BUNDLE_NAME}" "${VERSION}" TEST
+
+  notify-slack:
+    name: Notify Slack
+    needs: [get-version, promote-to-test]
+    if: always() && needs.promote-to-test.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    env:
+      VERSION: ${{ needs.get-version.outputs.VERSION }}
+      BRANCH: ${{ github.ref_name }}
+      ACTOR: ${{ github.actor }}
+      RUN_NUMBER: ${{ github.run_number }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Set Slack message text
+        id: slack_text
+        env:
+          SLACK_TITLE: aerospike-asvalidation ${{ env.VERSION }} promoted to JFrog TEST
+        run: |
+          set -euo pipefail
+          timestamp=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          SLACK_MSG="*Product:* aerospike-asvalidation"$'\n'"*Branch:* ${BRANCH}"$'\n'"*Bundle Version:* ${VERSION}"$'\n'"*Triggered by:* ${ACTOR}"$'\n'"*Run:* #${RUN_NUMBER}"$'\n'"*Time:* ${timestamp}"
+          delimiter="SLACK_$(openssl rand -hex 8)"
+          {
+            echo "title<<${delimiter}"
+            echo "$SLACK_TITLE"
+            echo "${delimiter}"
+            echo "body<<${delimiter}"
+            echo "$SLACK_MSG"
+            echo "${delimiter}"
+            echo "workflow_mrk<<${delimiter}"
+            echo "<${RUN_URL}|Workflow run #${RUN_NUMBER}>"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Slack message to TOOLS
+        continue-on-error: true
+        uses: step-security/slack-github-action@16410fbfd088e8034b2d1cda051d29ada4097065 # v3.0.3
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.TOOLS_SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ secrets.TOOLS_SLACK_CHANNEL }}",
+              "text": ${{ toJSON(steps.slack_text.outputs.title) }},
+              "blocks": [
+                { "type": "header", "text": { "type": "plain_text", "text": ${{ toJSON(steps.slack_text.outputs.title) }}, "emoji": true } },
+                { "type": "section", "text": { "type": "mrkdwn", "text": ${{ toJSON(steps.slack_text.outputs.body) }} } },
+                { "type": "section", "text": { "type": "mrkdwn", "text": ${{ toJSON(steps.slack_text.outputs.workflow_mrk) }} } }
+              ]
+            }

@@ -328,6 +328,19 @@ named `aerospike-asvalidation` and replace the older `asvalidation` package:
 `apt install aerospike-asvalidation` once (`apt upgrade` alone keeps the old
 package).
 
+### Release
+
+1. Run the Bump Version workflow from the Actions tab with the new version
+   (`2.3.0-rc1`, then the next `-rcN` for each respin). It opens a PR that
+   changes `VERSION`; merge it.
+2. Run the Build and Release workflow on master with `release=true`. It builds
+   and tests the Linux packages, the macOS `.pkg` and the Docker image, signs
+   them, publishes them to JFrog, creates the release bundle, promotes it to
+   TEST and, last, tags the commit with `VERSION`. With `release=false` it is a
+   dry run that only builds and tests.
+3. At GA the release candidate that passed is promoted with no rebuild. Push
+   the bare `x.y.z` tag on its commit by hand, which drafts the GitHub release.
+
 ## Validation File Format
 
 Currently, there is only a single, text-based validation file format, which provides compatibility with previous versions of Aerospike. However, validation file formats are pluggable and a binary format could be supported in the future.
