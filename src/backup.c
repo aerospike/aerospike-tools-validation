@@ -1663,8 +1663,16 @@ safe_join(pthread_t thread, void **thread_res)
 static void
 print_version(void)
 {
+	// The last "-" field names the build (rc1, the commit sha).
+	const char *build = strrchr(TOOL_VERSION, '-');
+
 	fprintf(stdout, "Aerospike Validation Utility\n");
-	fprintf(stdout, "Version %s\n", TOOL_VERSION);
+	fprintf(stdout, "Version %.*s\n", (int)strcspn(TOOL_VERSION, "-"), TOOL_VERSION);
+
+	if (build != NULL) {
+		fprintf(stdout, "Build %s\n", build + 1);
+	}
+
 	fprintf(stdout, "C Client Version %s\n", aerospike_client_version);
 	fprintf(stdout, "Copyright 2015-2026 Aerospike. All rights reserved.\n");
 }

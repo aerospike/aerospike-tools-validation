@@ -110,5 +110,8 @@ jobs:
         working-directory: main
 
       - name: Check the binary reports VERSION
-        run: bin/asvalidation --version | grep -xF "Version $(build/version -v)"
+        run: |
+          set -euo pipefail
+          source .github/bin/test/version_lib.sh
+          assert_version_output "$(bin/asvalidation --version)" "$(build/version -v)"
         working-directory: main

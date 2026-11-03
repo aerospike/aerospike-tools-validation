@@ -316,6 +316,9 @@ The `VERSION` file at the top of the repository holds the release version, as
 one line `x.y.z`, or `x.y.z-rcN` for a release candidate. `make` stamps it into
 the binary, and `make rpm` / `make deb` name the packages from it, both through
 `build/version`. Builds from other branches report `<version>-<n>-g<sha>`.
+`asvalidation --version` prints the part before the first `-` on a `Version`
+line and the last field, if any, on a `Build` line: `2.3.0-rc1` prints
+`Version 2.3.0` and `Build rc1`, and `2.3.0` prints no `Build` line.
 
 Packages never carry `rcN` in their version; it becomes the package iteration,
 so `2.3.0-rc2` builds `aerospike-asvalidation_2.3.0-2ubuntu24.04_amd64.deb` and
