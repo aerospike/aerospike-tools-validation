@@ -2,41 +2,22 @@ Name: asvalidation
 Version: @VERSION@
 Release: @RELEASE@%{?dist}
 Summary: Aerospike Validation Tool
-License: Apache 2.0 license
-Group: Application
-BuildArch: @ARCH@
+License: Apache-2.0
+URL: https://github.com/aerospike/aerospike-tools-validation
+
+# Package the binary as the top-level Makefile built it, as the old spec did:
+# no strip, no debuginfo package.
+%global debug_package %{nil}
+%global __os_install_post %{nil}
+
 %description
-This tool scans all records in a namespace and validates bins with Complex Data Type (CDT) values, optionally attempting to repair any damage detected. Records with unrecoverable CDT errors are backed up in asbackup format if an output file is specified. Records without CDTs or detected errors are ignored.
-%define _topdir dist
-%define __spec_install_post /usr/lib/rpm/brp-compress
+asvalidation validates, and optionally repairs, Complex Data Type (CDT) bins
+in an Aerospike database.
 
-%package tools
-Summary: The Aerospike Validation Tool
-Group: Applications
-%description tools
-Tools for use with the Aerospike database
+%install
+cp -a %{_stagedir}/. %{buildroot}/
+
 %files
-%defattr(-,aerospike,aerospike)
+%defattr(-,root,root,-)
 /opt/aerospike/bin/asvalidation
-%defattr(-,root,root)
 /usr/bin/asvalidation
-
-%prep
-ln -sf /opt/aerospike/bin/asvalidation %{buildroot}/usr/bin/asvalidation
-
-%pre tools
-echo Installing /opt/aerospike/asvalidation
-if ! id -g aerospike >/dev/null 2>&1; then
-        echo "Adding group aerospike"
-        /usr/sbin/groupadd -r aerospike
-fi
-if ! id -u aerospike >/dev/null 2>&1; then
-        echo "Adding user aerospike"
-        /usr/sbin/useradd -r -d /opt/aerospike -c 'Aerospike server' -g aerospike aerospike
-fi
-
-%preun tools
-if [ $1 -eq 0 ]
-then
-        echo Removing /opt/aerospike/asvalidation
-fi
