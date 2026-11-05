@@ -25,5 +25,16 @@ rather than testing against whatever it was handed.
 EXPECTED_VERSION=2.3.0-abc123def bats .github/bin/test/test_execute.bats
 ```
 
-`pkg_release.bats` (the rcN to iteration fold) and `test_entrypoint.bats` (the Docker
-image entrypoint) need no package and run on every pull request in `build-check.yml`.
+`pkg_release.bats` (the rcN to iteration fold), `test_entrypoint.bats` (the Docker
+image entrypoint), `check_min_os.bats` (the macOS floor check, with `otool` and `file`
+stubbed on `PATH`) and `validate_inputs.bats` (the Build and Release VERSION gate, read
+from the workflow with `yq`) need no package and run on every pull request in
+`build-check.yml`.
+
+```
+bats .github/bin/test/pkg_release.bats .github/bin/test/test_entrypoint.bats \
+    .github/bin/test/check_min_os.bats .github/bin/test/validate_inputs.bats
+```
+
+These use `[[ ]]` mid-test, which the bash 3.2 that macOS ships does not treat as a
+failure, so run them with bash 4.1 or later.

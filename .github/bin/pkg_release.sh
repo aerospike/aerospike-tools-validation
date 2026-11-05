@@ -15,8 +15,10 @@
 # so two different pre-releases can never collapse onto the same package name.
 # A version that would still carry an rc identifier after the fold (bare "-rc",
 # more than 4 rc digits, a second rc identifier) is rejected rather than shipped
-# under a name the standard forbids. Cases are pinned in
-# .github/bin/test/pkg_release.bats.
+# under a name the standard forbids.
+#
+# This file is shared verbatim across the tools repos and the bundle; keep the
+# copies byte-identical and the shared cases in pkg_release.bats in step.
 #
 # Usage: pkg_release.sh <version> [version|iteration|release|all]
 #   version    package version, rcN stripped

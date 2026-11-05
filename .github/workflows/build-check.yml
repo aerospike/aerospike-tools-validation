@@ -57,6 +57,14 @@ jobs:
       - name: Test pkg_release.sh
         run: bats .github/bin/test/pkg_release.bats
 
+      - name: Test check_min_os.sh
+        run: bats .github/bin/test/check_min_os.bats
+
+      - name: Test the Build and Release VERSION gate
+        run: |
+          yq --version
+          bats .github/bin/test/validate_inputs.bats
+
       # The .deb/.rpm legs below only count that a package appeared; nothing
       # asserts the NAME. Assert it here, where the expected name is derived
       # from the same script pkg/Makefile uses, so the two cannot drift.

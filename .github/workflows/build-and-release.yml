@@ -2,7 +2,7 @@
 # Same shape as the aql pipeline; keep the two in step.
 #
 # Source of truth for the version: the VERSION file at repo root. It carries
-# the release candidate too (e.g. 2.3.0-rc1), written by the Bump Version
+# the release candidate too (e.g. 2.3.1-rc1), written by the Bump Version
 # workflow. Each respin bumps it to the next -rcN.
 #
 # get-version emits two strings:
@@ -14,13 +14,14 @@
 #                  rpm Release and never in a file name or image tag.
 #
 # === Main release flow ===
-#   1. Run Bump Version (manual) -> opens PR updating VERSION (e.g. 2.3.0-rc1).
+#   1. Run Bump Version (manual) -> opens PR updating VERSION (e.g. 2.3.1-rc1).
 #   2. Review + merge the PR to master.
 #   3. Dispatch this workflow on master with `release=true`:
 #      - Builds + signs + tests + publishes packages to JFrog dev repos.
 #      - Creates JFrog release bundle (the promotion unit for any publish).
-#      - Creates and pushes git tag <VERSION> (e.g. 2.3.0-rc1), last.
-#   At GA the passing rc is promoted with no rebuild: its 2.3.0-N artifacts
+#      - Creates and pushes git tag <VERSION> (e.g. 2.3.1-rc1) after the
+#        bundle. Promotion to TEST and the Slack notice run alongside it.
+#   At GA the passing rc is promoted with no rebuild: its 2.3.1-N artifacts
 #   are what ship. Pushing the bare GA tag by hand drafts the GitHub release
 #   (draft-release.yml); a tag pushed by this workflow's GITHUB_TOKEN does not
 #   trigger other workflows.
@@ -30,9 +31,9 @@
 #      - No git tag is created (tags are master-only).
 #      - VERSION is a SemVer 2.0 pre-release identifier, so it sorts correctly
 #        in apt/dnf and never collides with master:
-#            2.3.0-rc1 + branch feature/foo, sha abc123456
-#          -> VERSION       2.3.0-rc1-feature-foo-abc123456
-#          -> BUILD_VERSION 2.3.0-abc123456   (sha pins it; iteration stays 1)
+#            2.3.1-rc1 + branch feature/foo, sha abc123456
+#          -> VERSION       2.3.1-rc1-feature-foo-abc123456
+#          -> BUILD_VERSION 2.3.1-abc123456   (sha pins it; iteration stays 1)
 #      - Packages are uploaded to the JFrog dev repo and a release bundle is
 #        created so the artifacts can be promoted through JFrog.
 #
@@ -106,6 +107,7 @@ jobs:
       - name: Read and validate VERSION
         id: read
         env:
+          RELEASE: ${{ inputs.release }}
           SKIP_TAGGING: ${{ inputs.skip_tagging }}
         run: |
           set -euo pipefail
@@ -117,8 +119,10 @@ jobs:
           # Reject a reused version before anything is built. create-tag checks
           # this too, but only after the packages and the release bundle are
           # published -- by then the previous build's files in the flat deb/rpm
-          # pools have already been overwritten.
-          if [[ "${GITHUB_REF}" == "refs/heads/master" && "${SKIP_TAGGING}" != "true" ]]; then
+          # pools have already been overwritten. Gated like create-tag, so a dry
+          # run stays runnable against an already tagged VERSION.
+          if [[ "${RELEASE}" == "true" && "${GITHUB_REF}" == "refs/heads/master" \
+                && "${SKIP_TAGGING}" != "true" ]]; then
             for tag in "${VERSION}" "v${VERSION}"; do
               if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
                 echo "::error::Tag '${tag}' already exists. Bump VERSION (Bump Version workflow) to the next -rcN before releasing again." >&2
@@ -1129,8 +1133,9 @@ jobs:
       gh-workflows-ref: v3.7.0
       dry-run: false
 
-  # Tag-last: created only after every publish step succeeds. A failure
-  # anywhere upstream means no tag and no inconsistent state.
+  # Created only after the packages, the Docker image and the release bundle
+  # are published, so a failed publish leaves no tag. promote-to-test and
+  # notify-slack do not wait for it.
   create-tag:
     name: Create git tag (release marker)
     if: inputs.release == true && github.ref == 'refs/heads/master' && inputs.skip_tagging != true

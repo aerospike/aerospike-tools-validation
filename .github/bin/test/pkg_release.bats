@@ -4,7 +4,8 @@
 # .rpm, .tar and .pkg file name and every docker image tag in this repo.
 #
 # Unlike test_execute.bats these tests need no installed binary and no
-# packaging, so they run on every pull request.
+# packaging, so they run on every pull request. The script and this file are
+# shared verbatim across the tools repos; keep the copies byte-identical.
 
 setup() {
   PKG_RELEASE="$(cd "$BATS_TEST_DIRNAME/.." && pwd)/pkg_release.sh"

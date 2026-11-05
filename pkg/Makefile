@@ -13,7 +13,7 @@ STAGE_DIR = $(BUILD_DIR)/root
 TARGET_DIR = $(PKG_DIR)/../target/packages
 # Package variables
 BUILD_DISTRO ?= $(shell $(PKG_DIR)/../.github/bin/os_version.sh)
-# Packages up to 2.2.1 were named asvalidation. deb/control and
+# Packages up to 2.3.0 were named asvalidation. deb/control and
 # rpm/asvalidation.spec replace that package, so apt and dnf swap it out
 # instead of installing both.
 NAME = aerospike-asvalidation
