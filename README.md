@@ -310,6 +310,37 @@ To run the end-to-end test, which starts Aerospike CE 8.1 and 8.2.0 containers
 
     make e2e
 
+### Version
+
+The `VERSION` file at the top of the repository holds the release version, as
+one line `x.y.z`, or `x.y.z-rcN` for a release candidate. `make` stamps it into
+the binary, and `make rpm` / `make deb` name the packages from it, both through
+`build/version`. Builds from other branches report `<version>-<n>-g<sha>`.
+`asvalidation --version` prints the part before the first `-` on a `Version`
+line and the last field, if any, on a `Build` line: `2.3.1-rc1` prints
+`Version 2.3.1` and `Build rc1`, and `2.3.1` prints no `Build` line.
+
+Packages never carry `rcN` in their version; it becomes the package iteration,
+so `2.3.1-rc2` builds `aerospike-asvalidation_2.3.1-2ubuntu24.04_amd64.deb` and
+`aerospike-asvalidation-2.3.1-2.el9.x86_64.rpm`. From 2.3.1 the packages are
+named `aerospike-asvalidation` and replace the older `asvalidation` package:
+`dnf upgrade` swaps it automatically, and with apt run
+`apt install aerospike-asvalidation` once (`apt upgrade` alone keeps the old
+package).
+
+### Release
+
+1. Run the Bump Version workflow from the Actions tab with the new version
+   (`2.3.1-rc1`, then the next `-rcN` for each respin). It opens a PR that
+   changes `VERSION`; merge it.
+2. Run the Build and Release workflow on master with `release=true`. It builds
+   and tests the Linux packages, the macOS `.pkg` and the Docker image, signs
+   them, publishes them to JFrog and creates the release bundle. Then it tags
+   the commit with `VERSION` and, alongside the tag, promotes the bundle to
+   TEST. With `release=false` it is a dry run that only builds and tests.
+3. At GA the release candidate that passed is promoted with no rebuild. Push
+   the bare `x.y.z` tag on its commit by hand, which drafts the GitHub release.
+
 ## Validation File Format
 
 Currently, there is only a single, text-based validation file format, which provides compatibility with previous versions of Aerospike. However, validation file formats are pluggable and a binary format could be supported in the future.

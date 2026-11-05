@@ -1,7 +1,11 @@
 bin
+!/.github/bin/
 obj
 src/toml/libtoml.a
 src/toml/toml.o
 .cproject
 /build/
 /out/
+/client/
+/target/
+/pkg/build/

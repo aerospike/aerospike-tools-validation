@@ -1,8 +1,13 @@
-Package: asvalidation
+Package: aerospike-asvalidation
 Version: @VERSION@
-Section: Databases
+Section: database
 Priority: optional
 Architecture: @ARCH@
 Depends: libc6 (>= 2.7)
+Conflicts: asvalidation
+Replaces: asvalidation
 Maintainer: Aerospike, Inc. <info@aerospike.net>
-Description: Aerospike Validation Tool 
+Homepage: https://github.com/aerospike/aerospike-tools-validation
+Description: Aerospike Validation Tool
+ asvalidation validates, and optionally repairs, Complex Data Type (CDT) bins
+ in an Aerospike database.

@@ -1,0 +1,29 @@
+name: "Draft Release"
+
+# Fires on tags pushed by a person (the GA tag). Tags that build-and-release.yml
+# pushes with its GITHUB_TOKEN do not trigger workflows.
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  draft-release-notes:
+    runs-on: ubuntu-24.04
+    name: Draft Release
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Upload Artifacts to Release Draft
+        uses: step-security/action-gh-release@674f8f866246c6b91bd3f1688ba95e27b2ae8d2e # v2.4.1
+        with:
+          draft: true
+          generate_release_notes: true
